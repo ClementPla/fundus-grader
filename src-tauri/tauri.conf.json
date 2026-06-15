@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "FundusGrader",
+  "version": "0.1.0",
+  "identifier": "ca.udem.fundusgrader",
+  "build": {
+    "frontendDist": "../dist/fundus-grader/browser",
+    "devUrl": "http://localhost:4200",
+    "beforeDevCommand": "npm run ng:serve",
+    "beforeBuildCommand": "npm run ng:build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Fundus Grader",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 1100,
+        "minHeight": 700,
+        "fullscreen": false,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' tauri: ipc:; img-src 'self' fundus: http://*.localhost data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' tauri: ipc: http://ipc.localhost http://*.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png"
+    ]
+  }
+}

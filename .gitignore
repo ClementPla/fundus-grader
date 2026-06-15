@@ -1,0 +1,15 @@
+/node_modules
+/dist
+/src-tauri/target
+/src-tauri/gen
+*.log
+.DS_Store
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+/.angular
+
+*.sqlite
+*sqlite-shm
+*sqlite-wal

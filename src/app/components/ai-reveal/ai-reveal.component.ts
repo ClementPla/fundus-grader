@@ -1,19 +1,24 @@
-import { Component, EventEmitter, Input, Output, computed, signal } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { Component, EventEmitter, Input, Output } from "@angular/core";
+import { CommonModule } from "@angular/common";
 
-/**
- * Shown after the reader's first submit in AI phase. Displays the AI prediction
- * alongside the reader's pre-AI grade, with two actions:
- *
- *   - Keep my grade  → final submit with ai_decision='kept'
- *   - Update my grade → return to form for editing; final submit will set
- *                       ai_decision='changed'
- *
- * The component itself doesn't talk to the API; the parent (session) decides
- * what to do with the chosen action.
- */
+const ICDR_LABELS = new Map<number, string>([
+  [0, "No DR"],
+  [1, "Mild NPDR"],
+  [2, "Moderate NPDR"],
+  [3, "Severe NPDR"],
+  [4, "PDR"],
+  [6, "Ungradable"],
+]);
+
+const DME_LABELS = new Map<number, string>([
+  [0, "No DME"],
+  [1, "Mild"],
+  [2, "Severe"],
+  [6, "Ungradable"],
+]);
+
 @Component({
-  selector: 'app-ai-reveal',
+  selector: "app-ai-reveal",
   standalone: true,
   imports: [CommonModule],
   template: `
@@ -21,50 +26,70 @@ import { CommonModule } from '@angular/common';
       <div class="header">
         <h3>AI prediction</h3>
         <p class="faint">
-          You committed to a grade. The model's prediction is shown below.
-          You can keep your grade or revise it.
+          You committed to a grade. The model's prediction is shown below. You
+          can keep your grade or revise it.
         </p>
       </div>
 
       <div class="grades">
         <div class="grade-col">
           <span class="col-label">Your grade</span>
-          <div class="grade-row" [class.match]="bothMatch()">
+          <div
+            class="grade-row"
+            [class.match]="bothMatch()"
+            [class.ungradable]="humanIcdr === 6"
+          >
             <span class="grade-name">ICDR</span>
-            <span class="grade-value">{{ humanIcdr }}</span>
-            <span class="faint grade-desc">{{ icdrLabel(humanIcdr) }}</span>
+            <span class="grade-value">R{{ humanIcdr }}</span>
+            <span class="grade-desc faint">{{ icdrLabel(humanIcdr) }}</span>
           </div>
-          <div class="grade-row" [class.match]="bothMatch()">
+          <div
+            class="grade-row"
+            [class.match]="bothMatch()"
+            [class.ungradable]="humanDme === 6"
+          >
             <span class="grade-name">DME</span>
-            <span class="grade-value">{{ humanDme }}</span>
-            <span class="faint grade-desc">{{ dmeLabel(humanDme) }}</span>
+            <span class="grade-value">M{{ humanDme }}</span>
+            <span class="grade-desc faint">{{ dmeLabel(humanDme) }}</span>
           </div>
         </div>
 
         <div class="divider"></div>
 
-        <div class="ai grade-col">
+        <div class="grade-col ai">
           <span class="col-label">AI prediction</span>
-          <div class="grade-row" [class.mismatch]="!icdrMatch()" [class.match]="icdrMatch()">
+          <div
+            class="grade-row"
+            [class.mismatch]="!icdrMatch()"
+            [class.match]="icdrMatch()"
+            [class.ungradable]="aiIcdr === 6"
+          >
             <span class="grade-name">ICDR</span>
-            <span class="grade-value">{{ aiIcdr }}</span>
-            <span class="faint grade-desc">{{ icdrLabel(aiIcdr) }}</span>
+            <span class="grade-value">R{{ aiIcdr }}</span>
+            <span class="grade-desc faint">{{ icdrLabel(aiIcdr) }}</span>
           </div>
-          <div class="grade-row" [class.mismatch]="!dmeMatch()" [class.match]="dmeMatch()">
+          <div
+            class="grade-row"
+            [class.mismatch]="!dmeMatch()"
+            [class.match]="dmeMatch()"
+            [class.ungradable]="aiDme === 6"
+          >
             <span class="grade-name">DME</span>
-            <span class="grade-value">{{ aiDme }}</span>
-            <span class="faint grade-desc">{{ dmeLabel(aiDme) }}</span>
+            <span class="grade-value">M{{ aiDme }}</span>
+            <span class="grade-desc faint">{{ dmeLabel(aiDme) }}</span>
           </div>
         </div>
       </div>
 
       <div class="status" *ngIf="bothMatch()">
-        <span class="agree status-pill">AI agrees with your grading</span>
+        <span class="status-pill agree">AI agrees with your grading</span>
       </div>
       <div class="status" *ngIf="!bothMatch()">
-        <span class="disagree status-pill">
+        <span class="status-pill disagree">
           AI disagrees on
-          <ng-container *ngIf="!icdrMatch() && !dmeMatch()">ICDR &amp; DME</ng-container>
+          <ng-container *ngIf="!icdrMatch() && !dmeMatch()"
+            >ICDR &amp; DME</ng-container
+          >
           <ng-container *ngIf="!icdrMatch() && dmeMatch()">ICDR</ng-container>
           <ng-container *ngIf="icdrMatch() && !dmeMatch()">DME</ng-container>
         </span>
@@ -74,114 +99,140 @@ import { CommonModule } from '@angular/common';
         <button class="primary" (click)="keep.emit()">Keep my grade</button>
         <button (click)="update.emit()">Update my grade</button>
       </div>
-      <p class="actions-help faint">
+      <p class="faint actions-help">
         "Keep" submits your grade unchanged. "Update" reopens the form so you
         can revise. Either way is recorded.
       </p>
     </div>
   `,
-  styles: [`
-    :host { display: block; }
-    .reveal-card {
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-      padding: 14px;
-      height: 100%;
-      box-sizing: border-box;
-      overflow-y: auto;
-    }
-    .header h3 {
-      margin: 0 0 4px 0;
-      font-size: 15px;
-      font-weight: 500;
-    }
-    .header .faint { font-size: 12px; line-height: 1.45; }
+  styles: [
+    `
+      :host {
+        display: block;
+      }
+      .reveal-card {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        padding: 14px;
+        height: 100%;
+        box-sizing: border-box;
+        overflow-y: auto;
+      }
+      .header h3 {
+        margin: 0 0 4px 0;
+        font-size: 15px;
+        font-weight: 500;
+      }
+      .header .faint {
+        font-size: 12px;
+        line-height: 1.45;
+      }
 
-    .grades {
-      display: grid;
-      grid-template-columns: 1fr auto 1fr;
-      gap: 10px;
-      align-items: stretch;
-      background: var(--bg-elev-2);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 12px;
-    }
-    .grade-col {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .grade-col.ai .col-label { color: var(--accent); }
-    .col-label {
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: var(--text-dim);
-      font-weight: 500;
-    }
-    .divider {
-      width: 1px;
-      background: var(--border);
-      align-self: stretch;
-    }
-    .grade-row {
-      display: grid;
-      grid-template-columns: 36px auto 1fr;
-      gap: 4px;
-      align-items: baseline;
-      padding: 4px 6px;
-      border-radius: 4px;
-      transition: background 120ms;
-    }
-    .grade-row.mismatch {
-      background: color-mix(in srgb, var(--danger) 14%, transparent);
-      border-left: 2px solid var(--danger);
-      padding-left: 4px;
-    }
-    .grade-row.match { /* keep neutral */ }
-    .grade-name {
-      font-size: 11px;
-      color: var(--text-dim);
-      font-weight: 500;
-    }
-    .grade-value {
-      font-size: 18px;
-      font-weight: 500;
-      font-family: var(--font-mono);
-    }
-    .grade-desc {
-      font-size: 11px;
-    }
+      .grades {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        gap: 10px;
+        align-items: stretch;
+        background: var(--bg-elev-2);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 12px;
+      }
+      .grade-col {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .grade-col.ai .col-label {
+        color: var(--accent);
+      }
+      .col-label {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--text-dim);
+        font-weight: 500;
+      }
+      .divider {
+        width: 1px;
+        background: var(--border);
+        align-self: stretch;
+      }
 
-    .status { display: flex; }
-    .status-pill {
-      display: inline-block;
-      padding: 4px 10px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 500;
-    }
-    .status-pill.agree {
-      background: color-mix(in srgb, var(--success) 18%, var(--bg-elev-2));
-      color: var(--success);
-      border: 1px solid var(--success);
-    }
-    .status-pill.disagree {
-      background: color-mix(in srgb, var(--danger) 14%, var(--bg-elev-2));
-      color: var(--danger);
-      border: 1px solid var(--danger);
-    }
+      .grade-row {
+        display: grid;
+        grid-template-columns: 36px auto 1fr;
+        gap: 4px;
+        align-items: baseline;
+        padding: 4px 6px;
+        border-radius: 4px;
+        transition: background 120ms;
+      }
+      .grade-row.mismatch {
+        background: color-mix(in srgb, var(--danger) 14%, transparent);
+        border-left: 2px solid var(--danger);
+        padding-left: 4px;
+      }
+      .grade-row.ungradable {
+        background: color-mix(in srgb, var(--warn) 12%, transparent);
+        border-left: 2px solid var(--warn);
+        padding-left: 4px;
+      }
+      /* mismatch + ungradable: mismatch wins visually */
+      .grade-row.mismatch.ungradable {
+        background: color-mix(in srgb, var(--danger) 14%, transparent);
+        border-left-color: var(--danger);
+      }
+      .grade-name {
+        font-size: 11px;
+        color: var(--text-dim);
+        font-weight: 500;
+      }
+      .grade-value {
+        font-size: 18px;
+        font-weight: 500;
+        font-family: var(--font-mono);
+      }
+      .grade-desc {
+        font-size: 11px;
+      }
 
-    .actions {
-      display: flex;
-      gap: 8px;
-      margin-top: 4px;
-    }
-    .actions button { flex: 1; }
-    .actions-help { font-size: 11px; margin: 0; }
-  `],
+      .status {
+        display: flex;
+      }
+      .status-pill {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 500;
+      }
+      .status-pill.agree {
+        background: color-mix(in srgb, var(--success) 18%, var(--bg-elev-2));
+        color: var(--success);
+        border: 1px solid var(--success);
+      }
+      .status-pill.disagree {
+        background: color-mix(in srgb, var(--danger) 14%, var(--bg-elev-2));
+        color: var(--danger);
+        border: 1px solid var(--danger);
+      }
+
+      .actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 4px;
+      }
+      .actions button {
+        flex: 1;
+      }
+      .actions-help {
+        font-size: 11px;
+        margin: 0;
+      }
+    `,
+  ],
 })
 export class AiRevealComponent {
   @Input({ required: true }) humanIcdr!: number;
@@ -192,14 +243,20 @@ export class AiRevealComponent {
   @Output() keep = new EventEmitter<void>();
   @Output() update = new EventEmitter<void>();
 
-  icdrMatch(): boolean { return this.humanIcdr === this.aiIcdr; }
-  dmeMatch(): boolean { return this.humanDme === this.aiDme; }
-  bothMatch(): boolean { return this.icdrMatch() && this.dmeMatch(); }
+  icdrMatch(): boolean {
+    return this.humanIcdr === this.aiIcdr;
+  }
+  dmeMatch(): boolean {
+    return this.humanDme === this.aiDme;
+  }
+  bothMatch(): boolean {
+    return this.icdrMatch() && this.dmeMatch();
+  }
 
   icdrLabel(v: number): string {
-    return ['No DR', 'Mild NPDR', 'Moderate NPDR', 'Severe NPDR', 'PDR'][v] ?? '';
+    return ICDR_LABELS.get(v) ?? "?";
   }
   dmeLabel(v: number): string {
-    return ['No DME', 'Mild', 'Moderate', 'Severe'][v] ?? '';
+    return DME_LABELS.get(v) ?? "?";
   }
 }

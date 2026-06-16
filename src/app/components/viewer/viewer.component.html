@@ -1,297 +1,403 @@
-    <div class="viewer-root">
-      <div class="topbar">
-        <div class="view-tabs">
-          <button
-            *ngFor="let v of viewStates"
-            [class.active]="v.view === currentView"
-            (click)="switchView(v.view)"
-          >
-            {{ v.view === 'macula' ? 'Macula' : 'Optic disc' }}
-          </button>
-        </div>
-        <div class="spacer"></div>
- 
-        <ng-container *ngIf="preprocessingAvailable">
-          <button
-            (click)="togglePreprocessing()"
-            [class.toggled]="currentViewState()?.preprocessed"
-            title="Toggle illumination correction"
-          >
-            {{ currentViewState()?.preprocessed ? 'Preprocessed' : 'Raw' }}
-          </button>
-        </ng-container>
- 
-        <button (click)="resetView()" title="Reset zoom and pan">Fit</button>
-        <span class="faint mono">{{ zoomLabel() }}</span>
-        <button
-          class="panel-toggle"
-          (click)="togglePanel()"
-          [class.toggled]="panelOpen()"
-          [title]="panelOpen() ? 'Hide overlay controls' : 'Show overlay controls'"
+<div class="viewer-root">
+  <div class="topbar">
+    <div class="view-tabs">
+      <button
+        *ngFor="let v of viewStates"
+        [class.active]="v.view === currentView"
+        (click)="switchView(v.view)"
+      >
+        {{ v.view === "macula" ? "Macula" : "Optic disc" }}
+      </button>
+    </div>
+    <div class="spacer"></div>
+
+    <ng-container *ngIf="preprocessingAvailable">
+      <button
+        (click)="togglePreprocessing()"
+        [class.toggled]="currentViewState()?.preprocessed"
+        title="Toggle illumination correction"
+      >
+        {{ currentViewState()?.preprocessed ? "Preprocessed" : "Raw" }}
+      </button>
+    </ng-container>
+
+    <button (click)="resetView()" title="Reset zoom and pan">Fit</button>
+    <span class="faint mono">{{ zoomLabel() }}</span>
+    <button
+      class="panel-toggle"
+      (click)="togglePanel()"
+      [class.toggled]="panelOpen()"
+      [title]="panelOpen() ? 'Hide overlay controls' : 'Show overlay controls'"
+    >
+      {{ panelOpen() ? "›" : "‹" }} Overlays
+    </button>
+  </div>
+
+  <div class="body">
+    <div
+      class="canvas-stage"
+      #stage
+      (wheel)="onWheel($event)"
+      (mousedown)="onMouseDown($event)"
+      (mousemove)="onMouseMove($event)"
+      (mouseup)="onMouseUp($event)"
+      (mouseleave)="onMouseUp($event)"
+      (contextmenu)="$event.preventDefault()"
+    >
+      <div class="transform-host" #host>
+        <img #img class="image-layer" alt="" (load)="onImageLoaded()" />
+        <svg
+          #overlaySvg
+          class="overlay-svg"
+          xmlns="http://www.w3.org/2000/svg"
+          preserveAspectRatio="none"
         >
-          {{ panelOpen() ? '›' : '‹' }} Overlays
-        </button>
-      </div>
- 
-      <div class="body">
-        <div
-          class="canvas-stage"
-          #stage
-          (wheel)="onWheel($event)"
-          (mousedown)="onMouseDown($event)"
-          (mousemove)="onMouseMove($event)"
-          (mouseup)="onMouseUp($event)"
-          (mouseleave)="onMouseUp($event)"
-          (contextmenu)="$event.preventDefault()"
-        >
-          <div class="transform-host" #host>
-            <img #img class="image-layer" alt="" (load)="onImageLoaded()" />
-            <svg
-              #overlaySvg
-              class="overlay-svg"
-              xmlns="http://www.w3.org/2000/svg"
-              preserveAspectRatio="none"
+          <ng-container *ngIf="currentViewState() as cs">
+            <g
+              *ngFor="let ov of cs.overlays; trackBy: trackByClassId"
+              [attr.data-class]="ov.classId"
+              [style.display]="ov.visible ? null : 'none'"
             >
-              <ng-container *ngIf="currentViewState() as cs">
-                <g
-                  *ngFor="let ov of cs.overlays; trackBy: trackByClassId"
-                  [attr.data-class]="ov.classId"
-                  [style.display]="ov.visible ? null : 'none'"
-                >
-                  <path
-                    [attr.d]="ov.pathD"
-                    [attr.fill]="ov.isOpticDisc ? (od().fill ? ov.swatch : 'none') : ov.swatch"
-                    [attr.fill-opacity]="resolveFillOpacity(ov)"
-                    [attr.stroke]="ov.swatch"
-                    [attr.stroke-width]="ov.isOpticDisc ? od().strokeWidth : lesions().strokeWidth"
-                    [attr.stroke-opacity]="ov.isOpticDisc ? od().strokeOpacity : lesions().strokeOpacity"
-                    [attr.stroke-dasharray]="resolveDasharray(ov)"
-                    [attr.fill-rule]="'evenodd'"
-                    [class.march]="resolveAnimate(ov) === 'march'"
-                    [class.pulse]="resolveAnimate(ov) === 'pulse'"
-                    [style.--pulse-min]="resolveFillOpacity(ov) * 0.25"
-                    [style.--pulse-max]="resolveFillOpacity(ov)"
-                    vector-effect="non-scaling-stroke"
-                    stroke-linejoin="round"
-                  ></path>
-                </g>
- 
-                <g
-                  *ngIf="cs.etdrs && etdrs().visible"
-                  class="etdrs-rings"
-                >
-                  <circle
-                    *ngFor="let r of cs.etdrs.pxRadii"
-                    [attr.cx]="cs.etdrs.cx"
-                    [attr.cy]="cs.etdrs.cy"
-                    [attr.r]="r"
-                    fill="none"
-                    [attr.stroke]="etdrs().strokeColor"
-                    [attr.stroke-width]="etdrs().strokeWidth"
-                    [attr.stroke-opacity]="etdrs().strokeOpacity"
-                    [attr.stroke-dasharray]="etdrs().dashed ? '4 3' : null"
-                    vector-effect="non-scaling-stroke"
-                  ></circle>
-                  <line
-                    [attr.x1]="cs.etdrs.cx - 6"
-                    [attr.y1]="cs.etdrs.cy"
-                    [attr.x2]="cs.etdrs.cx + 6"
-                    [attr.y2]="cs.etdrs.cy"
-                    [attr.stroke]="etdrs().strokeColor"
-                    stroke-width="1"
-                    [attr.stroke-opacity]="etdrs().strokeOpacity"
-                    vector-effect="non-scaling-stroke"
-                  ></line>
-                  <line
-                    [attr.x1]="cs.etdrs.cx"
-                    [attr.y1]="cs.etdrs.cy - 6"
-                    [attr.x2]="cs.etdrs.cx"
-                    [attr.y2]="cs.etdrs.cy + 6"
-                    [attr.stroke]="etdrs().strokeColor"
-                    stroke-width="1"
-                    [attr.stroke-opacity]="etdrs().strokeOpacity"
-                    vector-effect="non-scaling-stroke"
-                  ></line>
-                </g>
-              </ng-container>
-            </svg>
-          </div>
-        </div>
- 
-        <aside class="panel" *ngIf="panelOpen()">
-          <!-- Lesion group: chip-row of toggleable classes, then shared style sliders -->
-          <div class="panel-section" *ngIf="currentViewState() as cs">
-            <div class="section-head">
-              <h4>Lesions</h4>
-              <div class="head-actions">
-                <button class="link" (click)="showAllLesions(cs)" title="Show all lesion classes">All</button>
-                <button class="link" (click)="hideAllLesions(cs)" title="Hide all lesion classes">None</button>
-              </div>
-            </div>
- 
-            <div class="chip-row" *ngIf="lesionOverlays(cs).length > 0; else noLesions">
-              <button
-                *ngFor="let ov of lesionOverlays(cs); trackBy: trackByClassId"
-                class="chip"
-                [class.on]="ov.visible"
-                [style.--chip-color]="ov.swatch"
-                (click)="setVisible(ov, !ov.visible)"
-                [title]="(ov.visible ? 'Hide ' : 'Show ') + ov.name"
-              >
-                <span class="dot"></span>{{ ov.name }}
-              </button>
-            </div>
-            <ng-template #noLesions>
-              <p class="faint">No lesion overlays for this case.</p>
-            </ng-template>
- 
-            <ng-container *ngIf="anyLesionVisible(cs)">
-              <div class="slider">
-                <label>Fill <span class="val">{{ fmtPct(lesions().fillOpacity) }}</span></label>
-                <input
-                  type="range" min="0" max="1" step="0.01"
-                  [ngModel]="lesions().fillOpacity"
-                  (ngModelChange)="updateLesions({fillOpacity: $event}, 'fill_opacity')"
-                />
-              </div>
-              <div class="slider">
-                <label>Stroke <span class="val">{{ fmtPct(lesions().strokeOpacity) }}</span></label>
-                <input
-                  type="range" min="0" max="1" step="0.01"
-                  [ngModel]="lesions().strokeOpacity"
-                  (ngModelChange)="updateLesions({strokeOpacity: $event}, 'stroke_opacity')"
-                />
-              </div>
-              <div class="slider">
-                <label>Width <span class="val">{{ lesions().strokeWidth.toFixed(1) }}</span></label>
-                <input
-                  type="range" min="0" max="6" step="0.1"
-                  [ngModel]="lesions().strokeWidth"
-                  (ngModelChange)="updateLesions({strokeWidth: $event}, 'stroke_width')"
-                />
-              </div>
-              <div class="anim-row">
-                <span class="anim-label">Animate</span>
-                <button
-                  [class.toggled]="lesions().animate === 'none'"
-                  (click)="updateLesions({animate: 'none'}, 'animate')"
-                >Off</button>
-                <button
-                  [class.toggled]="lesions().animate === 'march'"
-                  (click)="updateLesions({animate: 'march'}, 'animate')"
-                  title="Marching dashed stroke"
-                >March</button>
-                <button
-                  [class.toggled]="lesions().animate === 'pulse'"
-                  (click)="updateLesions({animate: 'pulse'}, 'animate')"
-                  title="Pulsing fill"
-                >Pulse</button>
-              </div>
-            </ng-container>
-          </div>
- 
-          <!-- Optic disc: separate small block -->
-          <div class="panel-section" *ngIf="opticDiscOverlay() as od">
-            <div class="section-head">
-              <h4>
-                <label class="row" style="font-weight:500;">
-                  <input
-                    type="checkbox"
-                    [checked]="od.visible"
-                    (change)="setVisible(od, $any($event.target).checked)"
-                  />
-                  Optic disc
-                </label>
-              </h4>
-            </div>
-            <ng-container *ngIf="od.visible">
-              <div class="slider">
-                <label>Stroke <span class="val">{{ fmtPct(this.od().strokeOpacity) }}</span></label>
-                <input
-                  type="range" min="0" max="1" step="0.01"
-                  [ngModel]="this.od().strokeOpacity"
-                  (ngModelChange)="updateOd({strokeOpacity: $event}, 'stroke_opacity')"
-                />
-              </div>
-              <div class="slider">
-                <label>Width <span class="val">{{ this.od().strokeWidth.toFixed(1) }}</span></label>
-                <input
-                  type="range" min="0.5" max="6" step="0.1"
-                  [ngModel]="this.od().strokeWidth"
-                  (ngModelChange)="updateOd({strokeWidth: $event}, 'stroke_width')"
-                />
-              </div>
-              <label class="row">
-                <input
-                  type="checkbox"
-                  [checked]="this.od().fill"
-                  (change)="updateOd({fill: $any($event.target).checked}, 'fill')"
-                />
-                Fill
-              </label>
-            </ng-container>
-          </div>
- 
-          <!-- ETDRS rings -->
-          <div class="panel-section" *ngIf="currentViewState()?.etdrs as e">
-            <div class="section-head">
-              <h4>
-                <label class="row" style="font-weight:500;">
-                  <input
-                    type="checkbox"
-                    [checked]="etdrs().visible"
-                    (change)="updateEtdrs({visible: $any($event.target).checked}, 'visible')"
-                  />
-                  ETDRS rings
-                </label>
-              </h4>
-            </div>
-            <p class="faint">
-              Auto-centered on the macula ({{ e.ddRadii.join(', ') }} DD from OD).
-            </p>
-            <ng-container *ngIf="etdrs().visible">
-              <div class="slider">
-                <label>Stroke <span class="val">{{ fmtPct(etdrs().strokeOpacity) }}</span></label>
-                <input
-                  type="range" min="0" max="1" step="0.01"
-                  [ngModel]="etdrs().strokeOpacity"
-                  (ngModelChange)="updateEtdrs({strokeOpacity: $event}, 'stroke_opacity')"
-                />
-              </div>
-              <div class="slider">
-                <label>Width <span class="val">{{ etdrs().strokeWidth.toFixed(1) }}</span></label>
-                <input
-                  type="range" min="0.5" max="4" step="0.1"
-                  [ngModel]="etdrs().strokeWidth"
-                  (ngModelChange)="updateEtdrs({strokeWidth: $event}, 'stroke_width')"
-                />
-              </div>
-              <label class="row">
-                <input
-                  type="checkbox"
-                  [checked]="etdrs().dashed"
-                  (change)="updateEtdrs({dashed: $any($event.target).checked}, 'dashed')"
-                />
-                Dashed
-              </label>
-              <div class="dd-row row">
-                <span class="faint">Rings (DD):</span>
-                <input
-                  type="text"
-                  class="dd-input"
-                  [ngModel]="ddRadiiText()"
-                  (ngModelChange)="setDdRadiiText($event)"
-                  placeholder="1, 2, 3"
-                />
-              </div>
-            </ng-container>
-          </div>
- 
-          <div class="panel-section" *ngIf="currentViewState() && !currentViewState()!.etdrs">
-            <p class="faint">
-              No optic disc overlay on this view, so ETDRS rings cannot be auto-centered.
-            </p>
-          </div>
-        </aside>
+              <path
+                [attr.d]="ov.pathD"
+                [attr.fill]="
+                  ov.isOpticDisc ? (od().fill ? ov.swatch : 'none') : ov.swatch
+                "
+                [attr.fill-opacity]="resolveFillOpacity(ov)"
+                [attr.stroke]="ov.swatch"
+                [attr.stroke-width]="
+                  ov.isOpticDisc ? od().strokeWidth : lesions().strokeWidth
+                "
+                [attr.stroke-opacity]="
+                  ov.isOpticDisc ? od().strokeOpacity : lesions().strokeOpacity
+                "
+                [attr.stroke-dasharray]="resolveDasharray(ov)"
+                [attr.fill-rule]="'evenodd'"
+                [class.march]="resolveAnimate(ov) === 'march'"
+                [class.pulse]="resolveAnimate(ov) === 'pulse'"
+                [style.--pulse-min]="resolveFillOpacity(ov) * 0.25"
+                [style.--pulse-max]="resolveFillOpacity(ov)"
+                vector-effect="non-scaling-stroke"
+                stroke-linejoin="round"
+                class="structures"
+              ></path>
+            </g>
+
+            <g *ngIf="cs.etdrs && etdrs().visible" class="etdrs-rings">
+              <circle
+                *ngFor="let r of cs.etdrs.pxRadii"
+                [attr.cx]="cs.etdrs.cx"
+                [attr.cy]="cs.etdrs.cy"
+                [attr.r]="r"
+                fill="none"
+                [attr.stroke]="etdrs().strokeColor"
+                [attr.stroke-width]="etdrs().strokeWidth"
+                [attr.stroke-opacity]="etdrs().strokeOpacity"
+                [attr.stroke-dasharray]="etdrs().dashed ? '4 3' : null"
+                vector-effect="non-scaling-stroke"
+              ></circle>
+              <line
+                [attr.x1]="cs.etdrs.cx - 6"
+                [attr.y1]="cs.etdrs.cy"
+                [attr.x2]="cs.etdrs.cx + 6"
+                [attr.y2]="cs.etdrs.cy"
+                [attr.stroke]="etdrs().strokeColor"
+                stroke-width="1"
+                [attr.stroke-opacity]="etdrs().strokeOpacity"
+                vector-effect="non-scaling-stroke"
+              ></line>
+              <line
+                [attr.x1]="cs.etdrs.cx"
+                [attr.y1]="cs.etdrs.cy - 6"
+                [attr.x2]="cs.etdrs.cx"
+                [attr.y2]="cs.etdrs.cy + 6"
+                [attr.stroke]="etdrs().strokeColor"
+                stroke-width="1"
+                [attr.stroke-opacity]="etdrs().strokeOpacity"
+                vector-effect="non-scaling-stroke"
+              ></line>
+            </g>
+          </ng-container>
+        </svg>
       </div>
     </div>
+
+    <aside class="panel" *ngIf="panelOpen()">
+      <!-- Lesion group: chip-row of toggleable classes, then shared style sliders -->
+      <div class="panel-section" *ngIf="currentViewState() as cs">
+        <div class="section-head">
+          <h4>Lesions</h4>
+          <div class="head-actions">
+            <button
+              class="link"
+              (click)="showAllLesions(cs)"
+              title="Show all lesion classes"
+            >
+              All
+            </button>
+            <button
+              class="link"
+              (click)="hideAllLesions(cs)"
+              title="Hide all lesion classes"
+            >
+              None
+            </button>
+          </div>
+        </div>
+
+        <div
+          class="chip-row"
+          *ngIf="lesionOverlays(cs).length > 0; else noLesions"
+        >
+          <button
+            *ngFor="let ov of lesionOverlays(cs); trackBy: trackByClassId"
+            class="chip"
+            [class.on]="ov.visible"
+            [style.--chip-color]="ov.swatch"
+            (click)="setVisible(ov, !ov.visible)"
+            [title]="(ov.visible ? 'Hide ' : 'Show ') + ov.name"
+          >
+            <span class="dot"></span>{{ ov.name }}
+          </button>
+        </div>
+        <ng-template #noLesions>
+          <p class="faint">No lesion overlays for this case.</p>
+        </ng-template>
+
+        <ng-container *ngIf="anyLesionVisible(cs)">
+          <div class="slider">
+            <label
+              >Fill
+              <span class="val">{{
+                fmtPct(lesions().fillOpacity)
+              }}</span></label
+            >
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              [ngModel]="lesions().fillOpacity"
+              (ngModelChange)="
+                updateLesions({ fillOpacity: $event }, 'fill_opacity')
+              "
+            />
+          </div>
+          <div class="slider">
+            <label
+              >Stroke
+              <span class="val">{{
+                fmtPct(lesions().strokeOpacity)
+              }}</span></label
+            >
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              [ngModel]="lesions().strokeOpacity"
+              (ngModelChange)="
+                updateLesions({ strokeOpacity: $event }, 'stroke_opacity')
+              "
+            />
+          </div>
+          <div class="slider">
+            <label
+              >Width
+              <span class="val">{{
+                lesions().strokeWidth.toFixed(1)
+              }}</span></label
+            >
+            <input
+              type="range"
+              min="0"
+              max="6"
+              step="0.1"
+              [ngModel]="lesions().strokeWidth"
+              (ngModelChange)="
+                updateLesions({ strokeWidth: $event }, 'stroke_width')
+              "
+            />
+          </div>
+          <div class="anim-row">
+            <span class="anim-label">Animate</span>
+            <button
+              [class.toggled]="lesions().animate === 'none'"
+              (click)="updateLesions({ animate: 'none' }, 'animate')"
+            >
+              Off
+            </button>
+            <button
+              [class.toggled]="lesions().animate === 'march'"
+              (click)="updateLesions({ animate: 'march' }, 'animate')"
+              title="Marching dashed stroke"
+            >
+              March
+            </button>
+            <button
+              [class.toggled]="lesions().animate === 'pulse'"
+              (click)="updateLesions({ animate: 'pulse' }, 'animate')"
+              title="Pulsing fill"
+            >
+              Pulse
+            </button>
+          </div>
+        </ng-container>
+      </div>
+
+      <!-- Optic disc: separate small block -->
+      <div class="panel-section" *ngIf="opticDiscOverlay() as od">
+        <div class="section-head">
+          <h4>
+            <label class="row" style="font-weight: 500">
+              <input
+                type="checkbox"
+                [checked]="od.visible"
+                (change)="setVisible(od, $any($event.target).checked)"
+              />
+              Optic disc
+            </label>
+          </h4>
+        </div>
+        <ng-container *ngIf="od.visible">
+          <div class="slider">
+            <label
+              >Stroke
+              <span class="val">{{
+                fmtPct(this.od().strokeOpacity)
+              }}</span></label
+            >
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              [ngModel]="this.od().strokeOpacity"
+              (ngModelChange)="
+                updateOd({ strokeOpacity: $event }, 'stroke_opacity')
+              "
+            />
+          </div>
+          <div class="slider">
+            <label
+              >Width
+              <span class="val">{{
+                this.od().strokeWidth.toFixed(1)
+              }}</span></label
+            >
+            <input
+              type="range"
+              min="0.5"
+              max="6"
+              step="0.1"
+              [ngModel]="this.od().strokeWidth"
+              (ngModelChange)="
+                updateOd({ strokeWidth: $event }, 'stroke_width')
+              "
+            />
+          </div>
+          <label class="row">
+            <input
+              type="checkbox"
+              [checked]="this.od().fill"
+              (change)="updateOd({ fill: $any($event.target).checked }, 'fill')"
+            />
+            Fill
+          </label>
+        </ng-container>
+      </div>
+
+      <!-- ETDRS rings -->
+      <div class="panel-section" *ngIf="currentViewState()?.etdrs as e">
+        <div class="section-head">
+          <h4>
+            <label class="row" style="font-weight: 500">
+              <input
+                type="checkbox"
+                [checked]="etdrs().visible"
+                (change)="
+                  updateEtdrs(
+                    { visible: $any($event.target).checked },
+                    'visible'
+                  )
+                "
+              />
+              ETDRS rings
+            </label>
+          </h4>
+        </div>
+        <p class="faint">
+          Auto-centered on the macula ({{ e.ddRadii.join(", ") }} DD from OD).
+        </p>
+        <ng-container *ngIf="etdrs().visible">
+          <div class="slider">
+            <label
+              >Stroke
+              <span class="val">{{
+                fmtPct(etdrs().strokeOpacity)
+              }}</span></label
+            >
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              [ngModel]="etdrs().strokeOpacity"
+              (ngModelChange)="
+                updateEtdrs({ strokeOpacity: $event }, 'stroke_opacity')
+              "
+            />
+          </div>
+          <div class="slider">
+            <label
+              >Width
+              <span class="val">{{
+                etdrs().strokeWidth.toFixed(1)
+              }}</span></label
+            >
+            <input
+              type="range"
+              min="0.5"
+              max="4"
+              step="0.1"
+              [ngModel]="etdrs().strokeWidth"
+              (ngModelChange)="
+                updateEtdrs({ strokeWidth: $event }, 'stroke_width')
+              "
+            />
+          </div>
+          <label class="row">
+            <input
+              type="checkbox"
+              [checked]="etdrs().dashed"
+              (change)="
+                updateEtdrs({ dashed: $any($event.target).checked }, 'dashed')
+              "
+            />
+            Dashed
+          </label>
+          <div class="dd-row row">
+            <span class="faint">Rings (DD):</span>
+            <input
+              type="text"
+              class="dd-input"
+              [ngModel]="ddRadiiText()"
+              (ngModelChange)="setDdRadiiText($event)"
+              placeholder="1, 2, 3"
+            />
+          </div>
+        </ng-container>
+      </div>
+
+      <div
+        class="panel-section"
+        *ngIf="currentViewState() && !currentViewState()!.etdrs"
+      >
+        <p class="faint">
+          No optic disc overlay on this view, so ETDRS rings cannot be
+          auto-centered.
+        </p>
+      </div>
+    </aside>
+  </div>
+</div>

@@ -3,12 +3,16 @@ use crate::project_db;
 use crate::results_db;
 use crate::session;
 use crate::state::AppState;
-use argon2::password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::{
+    rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
+};
 use argon2::Argon2;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::State;
+
+// ---------- Open project / readers / sessions (unchanged from prior patches) ----------
 
 #[derive(Serialize)]
 pub struct OpenProjectResult {
@@ -28,8 +32,14 @@ pub async fn open_project(state: State<'_, AppState>, path: String) -> Result<Op
         return Err(Error::NotFound(format!("project file {}", path)));
     }
     let project = project_db::open(&project_path)?;
-    let stem = project_path.file_stem().and_then(|s| s.to_str()).unwrap_or("results").to_string();
-    let parent = project_path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let stem = project_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("results")
+        .to_string();
+    let parent = project_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
     let results_path = parent.join(format!("{}.results.sqlite", stem));
     let results = results_db::open(&results_path)?;
 
@@ -43,7 +53,6 @@ pub async fn open_project(state: State<'_, AppState>, path: String) -> Result<Op
         .map(|v| serde_json::from_str(&v).unwrap_or(serde_json::Value::Object(Default::default())))
         .unwrap_or(serde_json::Value::Object(Default::default()));
     let classes = project_db::list_classes(&project)?;
-
     let admin_configured = results_db::admin_get(&results, "password_hash")?.is_some();
 
     state.with(|s| {
@@ -137,7 +146,9 @@ pub async fn start_session(state: State<'_, AppState>) -> Result<SessionStart> {
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(true);
         let overlay_style: serde_json::Value = project_db::meta_get(project, "overlay_style")?
-            .map(|v| serde_json::from_str(&v).unwrap_or(serde_json::Value::Object(Default::default())))
+            .map(|v| {
+                serde_json::from_str(&v).unwrap_or(serde_json::Value::Object(Default::default()))
+            })
             .unwrap_or(serde_json::Value::Object(Default::default()));
         let classes = project_db::list_classes(project)?;
         Ok(SessionStart {
@@ -152,6 +163,8 @@ pub async fn start_session(state: State<'_, AppState>) -> Result<SessionStart> {
     })
 }
 
+// ---------- Case loading ----------
+
 #[derive(Serialize)]
 pub struct CaseView {
     pub view: String,
@@ -160,6 +173,7 @@ pub struct CaseView {
     pub width: i64,
     pub height: i64,
     pub masks: Vec<MaskOverlay>,
+    pub anatomy: Vec<project_db::AnatomyAnchor>,
 }
 
 #[derive(Serialize)]
@@ -176,17 +190,12 @@ pub struct CasePayload {
     pub is_calibration: bool,
     pub phase: String,
     pub views: Vec<CaseView>,
-    /// AI predictions exposed only in `ai` phase. None when no_ai phase or when
-    /// the case has no prediction stored.
     pub ai_icdr: Option<i64>,
     pub ai_dme: Option<i64>,
 }
 
 #[tauri::command]
-pub async fn start_case(
-    state: State<'_, AppState>,
-    assignment_id: i64,
-) -> Result<CasePayload> {
+pub async fn start_case(state: State<'_, AppState>, assignment_id: i64) -> Result<CasePayload> {
     state.require_project()?;
     let _reader_id = state.require_reader()?;
     state.with(|s| -> Result<CasePayload> {
@@ -226,6 +235,7 @@ pub async fn start_case(
                 None
             };
             let dims = project_db::get_image_dims(project, case_id, v)?;
+            let anatomy = project_db::list_anatomy(project, case_id, v)?;
             let masks = if phase == "ai" {
                 project_db::list_mask_contours(project, case_id, v)?
                     .into_iter()
@@ -244,13 +254,13 @@ pub async fn start_case(
                 width: dims.width,
                 height: dims.height,
                 masks,
+                anatomy,
             });
         }
 
         session::mark_in_progress(results, aid)?;
         s.active_case = Some(session::new_active_case(aid, case_id));
 
-        // Only expose AI predictions in `ai` phase. In no_ai phase they stay None.
         let (ai_icdr, ai_dme) = if phase == "ai" {
             (case.ai_icdr, case.ai_dme)
         } else {
@@ -269,6 +279,8 @@ pub async fn start_case(
         })
     })
 }
+
+// ---------- Event and mouse-sample ingestion ----------
 
 #[derive(Deserialize)]
 pub struct EventIn {
@@ -289,38 +301,56 @@ pub async fn log_event(state: State<'_, AppState>, ev: EventIn) -> Result<()> {
     })
 }
 
+#[tauri::command]
+pub async fn push_mouse_samples(
+    state: State<'_, AppState>,
+    samples: Vec<session::MouseSampleIn>,
+) -> Result<()> {
+    if samples.is_empty() {
+        return Ok(());
+    }
+    state.with(|s| -> Result<()> {
+        let case = s
+            .active_case
+            .as_mut()
+            .ok_or_else(|| Error::Invalid("no active case".into()))?;
+        session::push_mouse_samples(case, samples);
+        Ok(())
+    })
+}
+
+// ---------- Submit ----------
+
 #[derive(Deserialize, Debug)]
 pub struct SubmitPayload {
-    /// Final grade after any AI-influenced revision.
     pub icdr: i64,
     pub dme: i64,
     pub notes: Option<String>,
     pub confidence: i64,
     pub difficulty: i64,
-
-    /// Grade the reader committed to BEFORE seeing AI. Null in no_ai phase
-    /// or when no AI prediction was available for the case.
     pub pre_ai_icdr: Option<i64>,
     pub pre_ai_dme: Option<i64>,
-
-    /// AI prediction actually displayed to the reader. Null if no prediction shown.
     pub ai_icdr_shown: Option<i64>,
     pub ai_dme_shown: Option<i64>,
-
-    /// One of: 'kept' | 'changed' | 'no_prediction' | None (= no_ai phase).
     pub ai_decision: Option<String>,
 }
 
+const ALLOWED_ICDR: &[i64] = &[0, 1, 2, 3, 4, 6];
+const ALLOWED_DME: &[i64] = &[0, 1, 2, 6];
+
 #[tauri::command]
-pub async fn submit_case(
-    state: State<'_, AppState>,
-    submission: SubmitPayload,
-) -> Result<()> {
-    if !(0..=4).contains(&submission.icdr) {
-        return Err(Error::Invalid("icdr out of range".into()));
+pub async fn submit_case(state: State<'_, AppState>, submission: SubmitPayload) -> Result<()> {
+    if !ALLOWED_ICDR.contains(&submission.icdr) {
+        return Err(Error::Invalid(format!(
+            "icdr {} not in {{R0..R4, R6}}",
+            submission.icdr
+        )));
     }
-    if !(0..=3).contains(&submission.dme) {
-        return Err(Error::Invalid("dme out of range".into()));
+    if !ALLOWED_DME.contains(&submission.dme) {
+        return Err(Error::Invalid(format!(
+            "dme {} not in {{M0..M2, M6}}",
+            submission.dme
+        )));
     }
     if !(1..=5).contains(&submission.confidence) {
         return Err(Error::Invalid("confidence 1..5".into()));
@@ -343,20 +373,40 @@ pub async fn submit_case(
         session::finalize_timings(&mut case);
 
         let now = chrono::Utc::now().to_rfc3339();
-        let active_macula = case.view_active_ms.get("macula").copied();
-        let active_od = case.view_active_ms.get("od").copied();
+        let is_ai_phase = submission.ai_decision.is_some();
+
+        // Per-(view, stage) timings.
+        let macula_pre = session::get_active_ms(&case, "macula", "grading");
+        let od_pre = session::get_active_ms(&case, "od", "grading");
+        let macula_post = session::get_post_ai_active_ms(&case, "macula");
+        let od_post = session::get_post_ai_active_ms(&case, "od");
+
+        // Totals (sum of all stages for this view) — keep populated for back-compat.
+        let macula_total = macula_pre + macula_post;
+        let od_total = od_pre + od_post;
+
+        // post_ai columns: NULL in no_ai phase (the concept doesn't apply).
+        let (macula_post_col, od_post_col): (Option<i64>, Option<i64>) = if is_ai_phase {
+            (Some(macula_post), Some(od_post))
+        } else {
+            (None, None)
+        };
+
         let first_macula = case.view_first_interaction_ms.get("macula").copied();
         let first_od = case.view_first_interaction_ms.get("od").copied();
 
         let tx = results.unchecked_transaction()?;
+
         tx.execute(
             "INSERT INTO submissions(
                 assignment_id, submitted_at, icdr, dme, notes, confidence, difficulty,
                 pre_ai_icdr, pre_ai_dme, ai_icdr_shown, ai_dme_shown, ai_decision,
                 active_time_ms_macula, active_time_ms_od,
+                active_time_ms_macula_pre_ai, active_time_ms_macula_post_ai,
+                active_time_ms_od_pre_ai,     active_time_ms_od_post_ai,
                 first_interaction_ms_macula, first_interaction_ms_od,
                 first_overlay_toggle_off_ms
-             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)",
             params![
                 case.assignment_id,
                 now,
@@ -370,20 +420,26 @@ pub async fn submit_case(
                 submission.ai_icdr_shown,
                 submission.ai_dme_shown,
                 submission.ai_decision,
-                active_macula,
-                active_od,
+                macula_total,
+                od_total,
+                macula_pre,
+                macula_post_col,
+                od_pre,
+                od_post_col,
                 first_macula,
                 first_od,
                 case.first_overlay_toggle_off_ms,
             ],
         )?;
         let submission_id: i64 = tx.last_insert_rowid();
+
+        // Flush event buffer.
         {
             let mut stmt = tx.prepare(
                 "INSERT INTO events(
                     assignment_id, submission_id, ts_ms_since_case_start, wall_clock_ms,
-                    view, event_type, payload_json
-                ) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                    stage, view, event_type, payload_json
+                ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
             )?;
             for ev in &case.events {
                 stmt.execute(params![
@@ -391,12 +447,36 @@ pub async fn submit_case(
                     submission_id,
                     ev.ts_ms_since_case_start,
                     ev.wall_clock_ms,
+                    ev.stage,
                     ev.view,
                     ev.event_type,
-                    ev.payload_json
+                    ev.payload_json,
                 ])?;
             }
         }
+
+        // Flush mouse sample buffer.
+        if !case.mouse_samples.is_empty() {
+            let mut stmt = tx.prepare(
+                "INSERT INTO mouse_track(
+                    assignment_id, submission_id, ts_ms_since_case_start,
+                    stage, view, x, y, scale
+                ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+            )?;
+            for sample in &case.mouse_samples {
+                stmt.execute(params![
+                    case.assignment_id,
+                    submission_id,
+                    sample.ts_ms_since_case_start,
+                    sample.stage,
+                    sample.view,
+                    sample.x,
+                    sample.y,
+                    sample.scale,
+                ])?;
+            }
+        }
+
         tx.execute(
             "UPDATE assignments SET status='submitted' WHERE id=?1",
             params![case.assignment_id],
@@ -420,13 +500,45 @@ pub async fn skip_case(state: State<'_, AppState>) -> Result<()> {
     })
 }
 
+// ---------- Preprocessing ----------
+
+#[tauri::command]
+pub async fn preprocess_case_image(
+    state: State<'_, AppState>,
+    case_id: i64,
+    view: String,
+) -> std::result::Result<tauri::ipc::Response, String> {
+    let raw = state.with(|s| -> std::result::Result<Vec<u8>, String> {
+        let project = s
+            .project_db
+            .as_ref()
+            .ok_or_else(|| "no project open".to_string())?;
+        crate::project_db::get_image(project, case_id, &view).map_err(|e| e.to_string())
+    })?;
+
+    let bytes =
+        tauri::async_runtime::spawn_blocking(move || -> std::result::Result<Vec<u8>, String> {
+            let img = image::load_from_memory(&raw).map_err(|e| format!("decode: {}", e))?;
+            let mut rgb = img.to_rgb8();
+            crate::preprocessing::stretch_histogram(&mut rgb, 0.02);
+            let mut out = Vec::with_capacity(raw.len());
+            {
+                let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 90);
+                enc.encode_image(&rgb)
+                    .map_err(|e| format!("encode: {}", e))?;
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(|e| format!("thread panic: {}", e))??;
+
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 // ---------- Admin (unchanged) ----------
 
 #[tauri::command]
-pub async fn admin_set_password(
-    state: State<'_, AppState>,
-    new_password: String,
-) -> Result<()> {
+pub async fn admin_set_password(state: State<'_, AppState>, new_password: String) -> Result<()> {
     if new_password.len() < 6 {
         return Err(Error::Invalid("password too short".into()));
     }
@@ -486,8 +598,7 @@ pub async fn admin_status(state: State<'_, AppState>) -> Result<AdminStatus> {
     state.require_project()?;
     state.with(|s| -> Result<AdminStatus> {
         let results = s.results_db.as_ref().unwrap();
-        let phase = results_db::admin_get(results, "phase")?
-            .unwrap_or_else(|| "no_ai".to_string());
+        let phase = results_db::admin_get(results, "phase")?.unwrap_or_else(|| "no_ai".to_string());
         let idle: i64 = results_db::admin_get(results, "idle_threshold_ms")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(15000);
@@ -598,15 +709,15 @@ pub async fn admin_revert_submission(
 }
 
 #[tauri::command]
-pub async fn admin_export_results(
-    state: State<'_, AppState>,
-    dest_path: String,
-) -> Result<String> {
+pub async fn admin_export_results(state: State<'_, AppState>, dest_path: String) -> Result<String> {
     state.require_admin()?;
     state.require_project()?;
     let src = state.with(|s| -> Result<PathBuf> {
         let path = s.project_path.as_ref().ok_or(Error::NoProject)?;
-        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("results");
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("results");
         let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
         Ok(parent.join(format!("{}.results.sqlite", stem)))
     })?;

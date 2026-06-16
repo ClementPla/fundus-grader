@@ -101,7 +101,10 @@ pub fn get_image_dims(conn: &Connection, case_id: i64, view: &str) -> Result<Ima
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .map_err(|_| Error::NotFound(format!("image dims case={} view={}", case_id, view)))?;
-    Ok(ImageDims { width: w, height: h })
+    Ok(ImageDims {
+        width: w,
+        height: h,
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -128,6 +131,44 @@ pub fn list_mask_contours(conn: &Connection, case_id: i64, view: &str) -> Result
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct AnatomyAnchor {
+    pub kind: String,
+    pub x: i64,
+    pub y: i64,
+    pub r: Option<i64>,
+}
+
+/// Return anatomical anchors for a (case, view). The `anatomy` table is
+/// optional — if it doesn't exist, this returns an empty vec rather than
+/// erroring, so older project DBs keep working.
+pub fn list_anatomy(conn: &Connection, case_id: i64, view: &str) -> Result<Vec<AnatomyAnchor>> {
+    let table_exists: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='anatomy'",
+        [],
+        |r| r.get(0),
+    )?;
+    if table_exists == 0 {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn.prepare(
+        "SELECT kind, x, y, r FROM anatomy WHERE case_id = ?1 AND view = ?2 ORDER BY kind",
+    )?;
+    let rows = stmt.query_map(params![case_id, view], |r| {
+        Ok(AnatomyAnchor {
+            kind: r.get(0)?,
+            x: r.get(1)?,
+            y: r.get(2)?,
+            r: r.get(3)?,
+        })
+    })?;
+    let mut v = Vec::new();
+    for row in rows {
+        v.push(row?);
+    }
+    Ok(v)
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ClassInfo {
     pub class_id: i64,
     pub name: String,
@@ -135,7 +176,8 @@ pub struct ClassInfo {
 }
 
 pub fn list_classes(conn: &Connection) -> Result<Vec<ClassInfo>> {
-    let mut stmt = conn.prepare("SELECT class_id, name, default_style_json FROM classes ORDER BY class_id")?;
+    let mut stmt =
+        conn.prepare("SELECT class_id, name, default_style_json FROM classes ORDER BY class_id")?;
     let rows = stmt.query_map([], |r| {
         let class_id: i64 = r.get(0)?;
         let name: String = r.get(1)?;

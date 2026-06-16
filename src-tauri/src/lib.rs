@@ -34,6 +34,8 @@ pub fn run() {
             commands::admin_list_submissions,
             commands::admin_revert_submission,
             commands::admin_export_results,
+            commands::preprocess_case_image,
+            commands::push_mouse_samples,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

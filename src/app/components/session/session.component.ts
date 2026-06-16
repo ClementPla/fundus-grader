@@ -1,16 +1,15 @@
-import { Component, OnDestroy, OnInit, ViewChild, signal } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { Router } from '@angular/router';
-import { ApiService } from '../../services/api.service';
-import { AppStateService } from '../../services/app-state.service';
-import { IdleService } from '../../services/idle.service';
-import { ViewerComponent } from '../viewer/viewer.component';
-import { GradingFormComponent } from '../grading-form/grading-form.component';
-import { AiRevealComponent } from '../ai-reveal/ai-reveal.component';
-import { AiDecision, CasePayload, SubmitPayload } from '../../types';
+import { Component, OnDestroy, OnInit, ViewChild, signal } from "@angular/core";
+import { CommonModule } from "@angular/common";
+import { Router } from "@angular/router";
+import { ApiService } from "../../services/api.service";
+import { AppStateService } from "../../services/app-state.service";
+import { IdleService } from "../../services/idle.service";
+import { ViewerComponent } from "../viewer/viewer.component";
+import { GradingFormComponent } from "../grading-form/grading-form.component";
+import { AiRevealComponent } from "../ai-reveal/ai-reveal.component";
+import { AiDecision, CasePayload, SubmitPayload } from "../../types";
 
-
-type Stage = 'grading' | 'ai_reveal' | 'editing_after_ai';
+type Stage = "grading" | "ai_reveal" | "editing_after_ai";
 
 interface PendingGrade {
   icdr: number;
@@ -21,9 +20,14 @@ interface PendingGrade {
 }
 
 @Component({
-  selector: 'app-session',
+  selector: "app-session",
   standalone: true,
-  imports: [CommonModule, ViewerComponent, GradingFormComponent, AiRevealComponent],
+  imports: [
+    CommonModule,
+    ViewerComponent,
+    GradingFormComponent,
+    AiRevealComponent,
+  ],
   template: `
     <div class="session-root">
       <div class="header">
@@ -34,7 +38,7 @@ interface PendingGrade {
         <span class="header-item">
           <span class="dim">Phase</span>
           <span class="phase-tag" [class.ai]="phase() === 'ai'">
-            {{ phase() === 'ai' ? 'AI assisted' : 'No AI' }}
+            {{ phase() === "ai" ? "AI assisted" : "No AI" }}
           </span>
         </span>
         <span class="header-item" *ngIf="caseData()?.is_calibration">
@@ -55,13 +59,21 @@ interface PendingGrade {
             [caseData]="cd"
             [classes]="appState.session()!.classes"
             [overlayStyle]="appState.session()!.overlay_style"
-            [preprocessingAvailable]="appState.session()!.preprocessing_available"
+            [preprocessingAvailable]="
+              appState.session()!.preprocessing_available
+            "
+            [stageTag]="stage()"
           ></app-viewer>
         </div>
         <div class="form-pane">
           <!-- AI reveal swaps in over the form when in ai_reveal stage -->
           <app-ai-reveal
-            *ngIf="stage() === 'ai_reveal' && pendingGrade() && cd.ai_icdr !== null && cd.ai_dme !== null"
+            *ngIf="
+              stage() === 'ai_reveal' &&
+              pendingGrade() &&
+              cd.ai_icdr !== null &&
+              cd.ai_dme !== null
+            "
             [humanIcdr]="pendingGrade()!.icdr"
             [humanDme]="pendingGrade()!.dme"
             [aiIcdr]="cd.ai_icdr!"
@@ -74,7 +86,9 @@ interface PendingGrade {
             *ngIf="stage() !== 'ai_reveal'"
             [caseData]="cd"
             [disabled]="busy()"
-            [submitLabel]="stage() === 'editing_after_ai' ? 'Confirm final' : 'Submit'"
+            [submitLabel]="
+              stage() === 'editing_after_ai' ? 'Confirm final' : 'Submit'
+            "
             (submitGrading)="onSubmit($event)"
             (skip)="onSkip()"
             (fieldChanged)="onFieldChanged($event)"
@@ -89,7 +103,9 @@ interface PendingGrade {
       <div class="done" *ngIf="done()">
         <div class="panel">
           <h2>Session complete</h2>
-          <p class="dim">You have graded all {{ progress().total }} cases for this phase.</p>
+          <p class="dim">
+            You have graded all {{ progress().total }} cases for this phase.
+          </p>
           <p class="dim">Thank you — you may close the application.</p>
           <button (click)="quit()">Exit</button>
         </div>
@@ -105,52 +121,93 @@ interface PendingGrade {
       </div>
     </div>
   `,
-  styles: [`
-    .session-root { display: flex; flex-direction: column; height: 100vh; }
-    .header {
-      display: flex; align-items: center; gap: 16px;
-      padding: 8px 14px;
-      background: var(--bg-elev); border-bottom: 1px solid var(--border);
-      font-size: 13px;
-    }
-    .header-item { display: flex; gap: 6px; align-items: baseline; }
-    .dim { color: var(--text-dim); font-size: 12px; }
-    .phase-tag {
-      padding: 2px 8px; border-radius: 4px;
-      background: var(--bg-elev-2); border: 1px solid var(--border); font-size: 12px;
-    }
-    .phase-tag.ai { background: var(--accent-dim); color: white; border-color: var(--accent); }
-    .cal-tag {
-      padding: 2px 8px; border-radius: 4px;
-      background: var(--warn); color: #1a1a1a; font-size: 12px; font-weight: 500;
-    }
-    .main {
-      flex: 1; display: grid; grid-template-columns: 1fr 380px; min-height: 0;
-    }
-    .viewer-pane { min-width: 0; min-height: 0; overflow: hidden; }
-    .form-pane {
-      border-left: 1px solid var(--border);
-      background: var(--bg);
-      overflow: hidden;
-    }
-    .empty, .done, .error {
-      flex: 1; display: flex; align-items: center; justify-content: center;
-    }
-    .panel { max-width: 480px; }
-  `],
+  styles: [
+    `
+      .session-root {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+      }
+      .header {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 8px 14px;
+        background: var(--bg-elev);
+        border-bottom: 1px solid var(--border);
+        font-size: 13px;
+      }
+      .header-item {
+        display: flex;
+        gap: 6px;
+        align-items: baseline;
+      }
+      .dim {
+        color: var(--text-dim);
+        font-size: 12px;
+      }
+      .phase-tag {
+        padding: 2px 8px;
+        border-radius: 4px;
+        background: var(--bg-elev-2);
+        border: 1px solid var(--border);
+        font-size: 12px;
+      }
+      .phase-tag.ai {
+        background: var(--accent-dim);
+        color: white;
+        border-color: var(--accent);
+      }
+      .cal-tag {
+        padding: 2px 8px;
+        border-radius: 4px;
+        background: var(--warn);
+        color: #1a1a1a;
+        font-size: 12px;
+        font-weight: 500;
+      }
+      .main {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1fr 380px;
+        min-height: 0;
+      }
+      .viewer-pane {
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+      }
+      .form-pane {
+        border-left: 1px solid var(--border);
+        background: var(--bg);
+        overflow: hidden;
+      }
+      .empty,
+      .done,
+      .error {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .panel {
+        max-width: 480px;
+      }
+    `,
+  ],
 })
 export class SessionComponent implements OnInit, OnDestroy {
-  @ViewChild('viewer') viewer?: ViewerComponent;
+  @ViewChild("viewer") viewer?: ViewerComponent;
 
   busy = signal(false);
   error = signal<string | null>(null);
   caseData = signal<CasePayload | null>(null);
-  phase = signal<'no_ai' | 'ai'>('no_ai');
+  phase = signal<"no_ai" | "ai">("no_ai");
   progress = signal({ done: 0, total: 0 });
   done = signal(false);
   idleThresholdMs = 15_000;
 
-  stage = signal<Stage>('grading');
+  stage = signal<Stage>("grading");
   pendingGrade = signal<PendingGrade | null>(null);
   private aiRevealAt: number | null = null;
 
@@ -163,7 +220,7 @@ export class SessionComponent implements OnInit, OnDestroy {
 
   async ngOnInit() {
     if (!this.appState.project() || !this.appState.reader()) {
-      this.router.navigate(['/login']);
+      this.router.navigate(["/login"]);
       return;
     }
     await this.startOrRefresh();
@@ -171,6 +228,16 @@ export class SessionComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     this.idle.stop();
+  }
+  private setStage(next: Stage) {
+    const prev = this.stage();
+    if (prev === next) return;
+    this.stage.set(next);
+    void this.api.logEvent({
+      event_type: "stage_change",
+      view: null,
+      payload: { from: prev, to: next },
+    });
   }
 
   private async startOrRefresh() {
@@ -180,7 +247,10 @@ export class SessionComponent implements OnInit, OnDestroy {
       const session = await this.api.startSession();
       this.appState.setSession(session);
       this.phase.set(session.phase);
-      this.progress.set({ done: session.progress.done, total: session.progress.total });
+      this.progress.set({
+        done: session.progress.done,
+        total: session.progress.total,
+      });
       const admin = await this.api.adminStatus();
       this.idleThresholdMs = admin.idle_threshold_ms;
       if (!session.next_case) {
@@ -202,10 +272,10 @@ export class SessionComponent implements OnInit, OnDestroy {
     try {
       const data = await this.api.startCase(assignmentId);
       this.caseData.set(data);
-      this.stage.set('grading');
+      this.setStage("grading");
       this.pendingGrade.set(null);
       this.aiRevealAt = null;
-      this.idle.start('macula', this.idleThresholdMs);
+      this.idle.start("macula", this.idleThresholdMs);
     } catch (e) {
       this.error.set(this.errorOf(e));
     } finally {
@@ -223,7 +293,7 @@ export class SessionComponent implements OnInit, OnDestroy {
     const cd = this.caseData();
     if (!cd) return;
 
-    if (this.stage() === 'editing_after_ai') {
+    if (this.stage() === "editing_after_ai") {
       // Second submit after AI reveal: 'changed' if any value differs from
       // pre-AI; otherwise still record as 'changed' since they entered the
       // edit flow (their decision was to update, even if they reverted).
@@ -231,37 +301,43 @@ export class SessionComponent implements OnInit, OnDestroy {
       const payload: SubmitPayload = {
         ...grade,
         pre_ai_icdr: pre?.icdr ?? null,
-        pre_ai_dme:  pre?.dme  ?? null,
+        pre_ai_dme: pre?.dme ?? null,
         ai_icdr_shown: cd.ai_icdr,
-        ai_dme_shown:  cd.ai_dme,
-        ai_decision: 'changed',
+        ai_dme_shown: cd.ai_dme,
+        ai_decision: "changed",
       };
       void this.api.logEvent({
-        event_type: 'ai_decision',
+        event_type: "ai_decision",
         view: null,
         payload: {
-          decision: 'changed',
-          pre_icdr: pre?.icdr ?? null, pre_dme: pre?.dme ?? null,
-          final_icdr: grade.icdr,      final_dme: grade.dme,
-          ai_icdr: cd.ai_icdr,         ai_dme: cd.ai_dme,
-          latency_ms: this.aiRevealAt !== null ? Date.now() - this.aiRevealAt : null,
+          decision: "changed",
+          pre_icdr: pre?.icdr ?? null,
+          pre_dme: pre?.dme ?? null,
+          final_icdr: grade.icdr,
+          final_dme: grade.dme,
+          ai_icdr: cd.ai_icdr,
+          ai_dme: cd.ai_dme,
+          latency_ms:
+            this.aiRevealAt !== null ? Date.now() - this.aiRevealAt : null,
         },
       });
       return this.finalSubmit(payload);
     }
 
     // Initial submit
-    if (this.phase() === 'ai' && cd.ai_icdr !== null && cd.ai_dme !== null) {
+    if (this.phase() === "ai" && cd.ai_icdr !== null && cd.ai_dme !== null) {
       // Capture pre-AI grade, swap form for reveal.
       this.pendingGrade.set(grade);
       this.aiRevealAt = Date.now();
-      this.stage.set('ai_reveal');
+      this.setStage("ai_reveal");
       void this.api.logEvent({
-        event_type: 'ai_revealed',
+        event_type: "ai_revealed",
         view: null,
         payload: {
-          pre_icdr: grade.icdr, pre_dme: grade.dme,
-          ai_icdr: cd.ai_icdr,  ai_dme: cd.ai_dme,
+          pre_icdr: grade.icdr,
+          pre_dme: grade.dme,
+          ai_icdr: cd.ai_icdr,
+          ai_dme: cd.ai_dme,
         },
       });
       return;
@@ -269,7 +345,7 @@ export class SessionComponent implements OnInit, OnDestroy {
 
     // no_ai phase, OR AI phase with no prediction available.
     const decision: AiDecision | null =
-      this.phase() === 'ai' ? 'no_prediction' : null;
+      this.phase() === "ai" ? "no_prediction" : null;
     const payload: SubmitPayload = {
       ...grade,
       pre_ai_icdr: null,
@@ -288,31 +364,35 @@ export class SessionComponent implements OnInit, OnDestroy {
     const payload: SubmitPayload = {
       ...pre,
       pre_ai_icdr: pre.icdr,
-      pre_ai_dme:  pre.dme,
+      pre_ai_dme: pre.dme,
       ai_icdr_shown: cd.ai_icdr,
-      ai_dme_shown:  cd.ai_dme,
-      ai_decision: 'kept',
+      ai_dme_shown: cd.ai_dme,
+      ai_decision: "kept",
     };
     void this.api.logEvent({
-      event_type: 'ai_decision',
+      event_type: "ai_decision",
       view: null,
       payload: {
-        decision: 'kept',
-        pre_icdr: pre.icdr,  pre_dme: pre.dme,
-        ai_icdr: cd.ai_icdr, ai_dme: cd.ai_dme,
-        latency_ms: this.aiRevealAt !== null ? Date.now() - this.aiRevealAt : null,
+        decision: "kept",
+        pre_icdr: pre.icdr,
+        pre_dme: pre.dme,
+        ai_icdr: cd.ai_icdr,
+        ai_dme: cd.ai_dme,
+        latency_ms:
+          this.aiRevealAt !== null ? Date.now() - this.aiRevealAt : null,
       },
     });
     void this.finalSubmit(payload);
   }
 
   onUpdateGrade() {
-    this.stage.set('editing_after_ai');
+    this.setStage("editing_after_ai");
     void this.api.logEvent({
-      event_type: 'ai_update_chosen',
+      event_type: "ai_update_chosen",
       view: null,
       payload: {
-        latency_ms: this.aiRevealAt !== null ? Date.now() - this.aiRevealAt : null,
+        latency_ms:
+          this.aiRevealAt !== null ? Date.now() - this.aiRevealAt : null,
       },
     });
   }
@@ -327,7 +407,10 @@ export class SessionComponent implements OnInit, OnDestroy {
       const session = await this.api.startSession();
       this.appState.setSession(session);
       this.phase.set(session.phase);
-      this.progress.set({ done: session.progress.done, total: session.progress.total });
+      this.progress.set({
+        done: session.progress.done,
+        total: session.progress.total,
+      });
       if (!session.next_case) {
         this.done.set(true);
         this.caseData.set(null);
@@ -344,7 +427,7 @@ export class SessionComponent implements OnInit, OnDestroy {
   // ---------- misc handlers ----------
 
   async onSkip() {
-    if (!confirm('Skip this case? It will be re-queued at the end.')) return;
+    if (!confirm("Skip this case? It will be re-queued at the end.")) return;
     try {
       await this.api.skipCase();
       this.idle.stop();
@@ -356,9 +439,12 @@ export class SessionComponent implements OnInit, OnDestroy {
 
   onFieldChanged(ev: { field: string; value: unknown }) {
     void this.api.logEvent({
-      event_type: 'grade_change',
+      event_type: "grade_change",
       view: null,
-      payload: { field: ev.field, value: ev.value as Record<string, unknown> | string | number | null },
+      payload: {
+        field: ev.field,
+        value: ev.value as Record<string, unknown> | string | number | null,
+      },
     });
   }
 
@@ -369,12 +455,13 @@ export class SessionComponent implements OnInit, OnDestroy {
   async quit() {
     this.idle.stop();
     this.appState.clearForLogout();
-    this.router.navigate(['/login']);
+    this.router.navigate(["/login"]);
   }
 
   private errorOf(e: unknown): string {
-    if (typeof e === 'string') return e;
-    if (e && typeof e === 'object' && 'message' in e) return String((e as { message: unknown }).message);
+    if (typeof e === "string") return e;
+    if (e && typeof e === "object" && "message" in e)
+      return String((e as { message: unknown }).message);
     return String(e);
   }
 }

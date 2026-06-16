@@ -1,34 +1,52 @@
-use crate::error::{Error, Result};
+// src-tauri/src/preprocessing.rs
+
 use image::RgbImage;
-use std::io::Cursor;
+use rayon::prelude::*;
 
-/// Illumination correction by background subtraction:
-///   corrected = raw - blur(raw, sigma) + mid_gray
-/// Standard for fundus images; sigma scales with image size.
-pub fn illumination_correct(png_bytes: &[u8]) -> Result<Vec<u8>> {
-    let img = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)?
-        .to_rgb8();
-    let (w, h) = img.dimensions();
-    // Sigma proportional to image extent; clamp for safety.
-    let sigma = ((w.max(h) as f32) / 30.0).clamp(8.0, 80.0);
-
-    let blurred = imageproc::filter::gaussian_blur_f32(&img, sigma);
-
-    let raw_buf: &[u8] = img.as_raw();
-    let bg_buf: &[u8] = blurred.as_raw();
-    let n = raw_buf.len();
-    let mut out_buf = vec![0u8; n];
-    for i in 0..n {
-        let v = raw_buf[i] as i32 - bg_buf[i] as i32 + 128;
-        out_buf[i] = v.clamp(0, 255) as u8;
+pub fn stretch_histogram(rgb: &mut RgbImage, percent: f32) {
+    let total = (rgb.width() as u32 * rgb.height() as u32) as f32;
+    if total == 0.0 {
+        return;
     }
-    let out: RgbImage = RgbImage::from_raw(w, h, out_buf)
-        .ok_or_else(|| Error::Internal("preprocessing: output buffer size mismatch".into()))?;
-
-    let mut buf = Vec::with_capacity(png_bytes.len());
-    {
-        let mut cursor = Cursor::new(&mut buf);
-        image::DynamicImage::ImageRgb8(out).write_to(&mut cursor, image::ImageFormat::Png)?;
+    let mut hist = [[0u32; 256]; 3];
+    for px in rgb.pixels() {
+        hist[0][px[0] as usize] += 1;
+        hist[1][px[1] as usize] += 1;
+        hist[2][px[2] as usize] += 1;
     }
-    Ok(buf)
+    let mut lo = [0.0f32; 3];
+    let mut hi = [255.0f32; 3];
+    for c in 0..3 {
+        let mut cdf = 0.0f32;
+        let mut lo_set = false;
+        let mut hi_set = false;
+        for i in 0..256 {
+            cdf += hist[c][i] as f32 / total;
+            if !lo_set && cdf > percent {
+                lo[c] = i as f32;
+                lo_set = true;
+            }
+            if !hi_set && cdf > 1.0 - percent {
+                hi[c] = i as f32;
+                hi_set = true;
+                break;
+            }
+        }
+        // Defensive: degenerate channel (single value) — avoid /0.
+        if (hi[c] - lo[c]).abs() < f32::EPSILON {
+            hi[c] = lo[c] + 1.0;
+        }
+    }
+    let scale = [
+        255.0 / (hi[0] - lo[0]),
+        255.0 / (hi[1] - lo[1]),
+        255.0 / (hi[2] - lo[2]),
+    ];
+    rgb.as_mut().par_chunks_exact_mut(3).for_each(|p| {
+        for c in 0..3 {
+            let v = (p[c] as f32 - lo[c]) * scale[c];
+            // .round() matches OpenCV's cvRound; .abs() matches convertScaleAbs.
+            p[c] = v.abs().clamp(0.0, 255.0).round() as u8;
+        }
+    });
 }

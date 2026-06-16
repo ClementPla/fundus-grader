@@ -11,7 +11,7 @@ export interface ClassStyle {
   stroke_width?: number;
   stroke_opacity?: number;
   stroke_dasharray?: string;
-  animate?: 'march' | 'pulse';
+  animate?: "march" | "pulse";
   visible_by_default?: boolean;
 }
 
@@ -37,7 +37,7 @@ export interface NextCase {
 }
 
 export interface SessionStart {
-  phase: 'no_ai' | 'ai';
+  phase: "no_ai" | "ai";
   progress: Progress;
   next_case: NextCase | null;
   od_enabled: boolean;
@@ -51,13 +51,21 @@ export interface MaskOverlay {
   contours_json: string;
 }
 
+export interface AnatomyAnchor {
+  kind: string;
+  x: number;
+  y: number;
+  r: number | null;
+}
+
 export interface CaseView {
-  view: 'macula' | 'od';
+  view: "macula" | "od";
   raw_uri: string;
   preprocessed_uri: string | null;
   width: number;
   height: number;
   masks: MaskOverlay[];
+  anatomy: AnatomyAnchor[];
 }
 
 export interface CasePayload {
@@ -65,9 +73,8 @@ export interface CasePayload {
   case_id: number;
   has_od: boolean;
   is_calibration: boolean;
-  phase: 'no_ai' | 'ai';
+  phase: "no_ai" | "ai";
   views: CaseView[];
-  /** AI predictions surfaced only in the `ai` phase. Null when no prediction exists. */
   ai_icdr: number | null;
   ai_dme: number | null;
 }
@@ -82,31 +89,41 @@ export interface OpenProjectResult {
   admin_configured: boolean;
 }
 
-export type AiDecision = 'kept' | 'changed' | 'no_prediction';
+export type AiDecision = "kept" | "changed" | "no_prediction";
+
+/** Reader's progress through a single case. Mirrors the session-component
+ *  state machine; the backend uses these exact strings. */
+export type Stage = "grading" | "ai_reveal" | "editing_after_ai";
 
 export interface SubmitPayload {
-  // Final grade (post-AI-revision if any).
   icdr: number;
   dme: number;
   notes: string | null;
   confidence: number;
   difficulty: number;
-
-  // Grade committed before seeing the AI. Null in no_ai phase or no-prediction cases.
   pre_ai_icdr: number | null;
   pre_ai_dme: number | null;
-
-  // AI prediction that was displayed. Null when nothing was shown.
   ai_icdr_shown: number | null;
   ai_dme_shown: number | null;
-
-  /** One of 'kept' | 'changed' | 'no_prediction', or null in no_ai phase. */
   ai_decision: AiDecision | null;
+}
+
+/** One mouse sample as sent to the backend. Coordinates are in image-space
+ *  pixels (post-inverse-transform). `stage` is stamped at capture time on
+ *  the frontend, because samples can spend up to ~1.5s in the flush buffer
+ *  and the stage may transition in that window. */
+export interface MouseSample {
+  ts_ms_since_case_start: number;
+  stage: Stage | null;
+  view: "macula" | "od";
+  x: number;
+  y: number;
+  scale: number;
 }
 
 export interface AdminStatus {
   authed: boolean;
-  phase: 'no_ai' | 'ai';
+  phase: "no_ai" | "ai";
   idle_threshold_ms: number;
 }
 

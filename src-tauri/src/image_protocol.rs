@@ -42,8 +42,13 @@ pub fn handle(ctx: UriSchemeContext<'_, Wry>, req: Request<Vec<u8>>) -> Response
         match variant.as_str() {
             "raw" => crate::project_db::get_image(project, case_id, &view),
             "preprocessed" => {
-                let raw = crate::project_db::get_image(project, case_id, &view)?;
-                crate::preprocessing::illumination_correct(&raw)
+                let raw_bytes = crate::project_db::get_image(project, case_id, &view)?;
+                let mut img = image::load_from_memory(&raw_bytes)?;
+                let mut rgb_img = img.to_rgb8();
+                crate::preprocessing::stretch_histogram(&mut rgb_img, 0.02);
+                let mut buf = Vec::new();
+                rgb_img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)?;
+                Ok(buf)
             }
             _ => Err(Error::Invalid(format!("variant {}", variant))),
         }

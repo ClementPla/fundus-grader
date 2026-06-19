@@ -1,6 +1,5 @@
 
  
-// --- pure helpers ----------------------------------------------------
  
 export function safeParseContours(json: string): number[][][] {
   try {
@@ -41,12 +40,6 @@ export function polygonsBoundingGeom(polygons: number[][][]): { cx: number; cy: 
   if (!count) return null;
   const cx = (minX + maxX) / 2;
   const cy = (minY + maxY) / 2;
-  let rMax = 0;
-  for (const poly of polygons) {
-    for (const [x, y] of poly) {
-      const d = Math.hypot(x - cx, y - cy);
-      if (d > rMax) rMax = d;
-    }
-  }
-  return { cx, cy, r: rMax };
+  const r = (maxX - minX) / 2;
+  return { cx, cy, r };
 }

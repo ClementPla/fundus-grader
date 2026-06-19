@@ -89,6 +89,14 @@ export class ViewerComponent
   private dragStartY = 0;
   private dragOrigTx = 0;
   private dragOrigTy = 0;
+
+  // Touch gesture state: one finger pans, two fingers pinch-zoom.
+  private touchMode: "none" | "pan" | "pinch" = "none";
+  private touchLastX = 0;
+  private touchLastY = 0;
+  private pinchPrevDist = 0;
+  private pinchPrevMidX = 0;
+  private pinchPrevMidY = 0;
   private firstInteractionSentFor = new Set<string>();
   private firstViewSentFor = new Set<string>();
   private zoomEmitTimer: number | null = null;
@@ -104,6 +112,19 @@ export class ViewerComponent
 
   private readonly MOUSE_SAMPLE_INTERVAL_MS = 200;
   private readonly MOUSE_SAMPLE_FLUSH_MS = 1500;
+
+  /** Macula (ETDRS center) drag-to-correct state. Public: read by the template
+   *  to suppress the auto-dim while the reader is repositioning the center. */
+  isDraggingMacula = false;
+  private maculaDragOrig: { cx: number; cy: number } | null = null;
+
+  /** Auto-dim state for the macula marker: becomes true after a few idle
+   *  seconds so it stops obscuring the fovea. Hovering it restores full
+   *  visibility (handled in CSS). The timer resets on any pointer movement. */
+  maculaIdle = signal(false);
+  private maculaIdleTimer: number | null = null;
+  private readonly MACULA_IDLE_MS = 3000;
+
   zoomLabel = signal("100%");
   panelOpen = signal(true);
 
@@ -124,7 +145,7 @@ export class ViewerComponent
 
   etdrs = signal<EtdrsConfig>({
     visible: true,
-    ddRadii: [1, 2, 3],
+    ddRadii: [1, 2],
     strokeColor: "#7df9ff",
     strokeWidth: 1.5,
     strokeOpacity: 0.85,
@@ -158,7 +179,6 @@ export class ViewerComponent
       this.mouseSampleLastCaptureMs = 0;
       this.mouseSampleLastX = Number.NaN;
       this.mouseSampleLastY = Number.NaN;
-      // ...existing reset...
       this.firstInteractionSentFor.clear();
       this.firstViewSentFor.clear();
       this.initViewStates();
@@ -171,6 +191,7 @@ export class ViewerComponent
     if (this.zoomEmitTimer !== null) window.clearTimeout(this.zoomEmitTimer);
     if (this.styleEmitTimer !== null) window.clearTimeout(this.styleEmitTimer);
     if (this.etdrsEmitTimer !== null) window.clearTimeout(this.etdrsEmitTimer);
+    if (this.maculaIdleTimer !== null) window.clearTimeout(this.maculaIdleTimer);
     document.removeEventListener("keydown", this.onDocumentKeyDown);
     this.stopMouseSampleFlusher(); // flushes any remaining samples
     this.revokeBlobUrls();
@@ -324,6 +345,7 @@ export class ViewerComponent
     );
     this.updateSvgViewBox(state);
     this.applyTransform();
+    this.resetMaculaIdle();
 
     if (!initial) {
       this.idle.setView(view);
@@ -449,6 +471,13 @@ export class ViewerComponent
   }
 
   onMouseMove(ev: MouseEvent) {
+    // Any pointer movement keeps the macula marker awake.
+    this.resetMaculaIdle();
+    // Macula correction takes priority over pan/sample while active.
+    if (this.isDraggingMacula) {
+      this.moveMaculaTo(ev);
+      return;
+    }
     // Existing drag logic:
     if (this.dragging) {
       const state = this.currentViewState();
@@ -461,7 +490,11 @@ export class ViewerComponent
     this.maybeSampleMouse(ev);
   }
 
-  onMouseUp(_ev: MouseEvent) {
+  onMouseUp(ev: MouseEvent) {
+    if (this.isDraggingMacula) {
+      this.endDragMacula(ev);
+      return;
+    }
     if (!this.dragging) return;
     this.dragging = false;
     this.stage.nativeElement.classList.remove("dragging");
@@ -475,6 +508,101 @@ export class ViewerComponent
     this.panChanged.emit({ view: state.view });
     this.markInteraction();
     void this.idle.poke("pan");
+  }
+
+  // ---------- touch (pan + pinch-zoom) ----------
+
+  onTouchStart(ev: TouchEvent) {
+    const state = this.currentViewState();
+    if (!state) return;
+    // Suppress synthesized mouse events so the gesture isn't double-handled.
+    ev.preventDefault();
+    if (ev.touches.length >= 2) {
+      this.touchMode = "pinch";
+      this.setPinchRef(ev);
+    } else if (ev.touches.length === 1) {
+      this.touchMode = "pan";
+      this.touchLastX = ev.touches[0].clientX;
+      this.touchLastY = ev.touches[0].clientY;
+    }
+    this.resetMaculaIdle();
+  }
+
+  onTouchMove(ev: TouchEvent) {
+    const state = this.currentViewState();
+    if (!state) return;
+    ev.preventDefault();
+    this.resetMaculaIdle();
+
+    if (this.touchMode === "pinch" && ev.touches.length >= 2) {
+      const rect = this.stage.nativeElement.getBoundingClientRect();
+      const a = ev.touches[0];
+      const b = ev.touches[1];
+      const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      const midX = (a.clientX + b.clientX) / 2 - rect.left;
+      const midY = (a.clientY + b.clientY) / 2 - rect.top;
+      if (this.pinchPrevDist > 0) {
+        // Zoom about the pinch midpoint (same math as the wheel handler)…
+        const factor = dist / this.pinchPrevDist;
+        const newScale = Math.max(0.05, Math.min(20, state.scale * factor));
+        state.tx = midX - (midX - state.tx) * (newScale / state.scale);
+        state.ty = midY - (midY - state.ty) * (newScale / state.scale);
+        state.scale = newScale;
+        // …then pan by however far the midpoint itself moved.
+        state.tx += midX - this.pinchPrevMidX;
+        state.ty += midY - this.pinchPrevMidY;
+        this.applyTransform();
+        this.markInteraction();
+      }
+      this.pinchPrevDist = dist;
+      this.pinchPrevMidX = midX;
+      this.pinchPrevMidY = midY;
+    } else if (this.touchMode === "pan" && ev.touches.length === 1) {
+      const t = ev.touches[0];
+      state.tx += t.clientX - this.touchLastX;
+      state.ty += t.clientY - this.touchLastY;
+      this.touchLastX = t.clientX;
+      this.touchLastY = t.clientY;
+      this.applyTransform();
+    }
+  }
+
+  onTouchEnd(ev: TouchEvent) {
+    const state = this.currentViewState();
+    if (ev.touches.length === 0) {
+      // Gesture fully ended — flush the appropriate analytics.
+      if (this.touchMode === "pinch") {
+        this.debouncedZoomEmit();
+      } else if (this.touchMode === "pan" && state) {
+        void this.api.logEvent({
+          event_type: "pan",
+          view: state.view,
+          payload: { tx: Math.round(state.tx), ty: Math.round(state.ty) },
+        });
+        this.panChanged.emit({ view: state.view });
+        void this.idle.poke("pan");
+      }
+      this.touchMode = "none";
+      this.markInteraction();
+    } else if (ev.touches.length === 1) {
+      // Dropped from pinch to a single finger: emit the zoom and continue panning.
+      this.debouncedZoomEmit();
+      this.touchMode = "pan";
+      this.touchLastX = ev.touches[0].clientX;
+      this.touchLastY = ev.touches[0].clientY;
+    } else if (ev.touches.length >= 2) {
+      // A finger lifted but two remain: re-seed the pinch reference.
+      this.setPinchRef(ev);
+    }
+  }
+
+  private setPinchRef(ev: TouchEvent) {
+    const rect = this.stage.nativeElement.getBoundingClientRect();
+    const a = ev.touches[0];
+    const b = ev.touches[1];
+    this.pinchPrevDist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    this.pinchPrevMidX = (a.clientX + b.clientX) / 2 - rect.left;
+    this.pinchPrevMidY = (a.clientY + b.clientY) / 2 - rect.top;
   }
 
   private maybeSampleMouse(ev: MouseEvent) {
@@ -763,5 +891,65 @@ export class ViewerComponent
   @HostListener("mouseleave")
   onHostMouseLeave() {
     this.mouseInViewer = false;
+  }
+
+  // ---------- macula (ETDRS center) drag-to-correct ----------
+
+  /** Begin dragging the macula center. Stops propagation so the stage's
+   *  pan handler doesn't also fire. */
+  startDragMacula(event: MouseEvent) {
+    if (event.button !== 0) return;
+    const state = this.currentViewState();
+    if (!state || !state.etdrs) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.isDraggingMacula = true;
+    this.maculaDragOrig = { cx: state.etdrs.cx, cy: state.etdrs.cy };
+  }
+
+  /** Convert the pointer position to image coords and move the center there,
+   *  clamped to the image bounds. The rings follow automatically since they're
+   *  drawn relative to (cx, cy). */
+  private moveMaculaTo(event: MouseEvent) {
+    const state = this.currentViewState();
+    if (!state || !state.etdrs || !state.width || !state.height) return;
+    const rect = this.stage.nativeElement.getBoundingClientRect();
+    const sx = event.clientX - rect.left;
+    const sy = event.clientY - rect.top;
+    const imgX = Math.round((sx - state.tx) / state.scale);
+    const imgY = Math.round((sy - state.ty) / state.scale);
+    state.etdrs.cx = Math.max(0, Math.min(state.width - 1, imgX));
+    state.etdrs.cy = Math.max(0, Math.min(state.height - 1, imgY));
+  }
+
+  /** Restore the macula marker to full visibility and (re)arm the idle timer
+   *  that dims it again after a few seconds. */
+  private resetMaculaIdle() {
+    if (this.maculaIdle()) this.maculaIdle.set(false);
+    if (this.maculaIdleTimer !== null) window.clearTimeout(this.maculaIdleTimer);
+    this.maculaIdleTimer = window.setTimeout(() => {
+      this.maculaIdle.set(true);
+    }, this.MACULA_IDLE_MS);
+  }
+
+  private endDragMacula(event: MouseEvent) {
+    this.moveMaculaTo(event);
+    this.isDraggingMacula = false;
+    const state = this.currentViewState();
+    const orig = this.maculaDragOrig;
+    this.maculaDragOrig = null;
+    if (!state || !state.etdrs || !orig) return;
+    // Ignore no-op drags (a click that didn't actually move the center).
+    if (orig.cx === state.etdrs.cx && orig.cy === state.etdrs.cy) return;
+    void this.api.logEvent({
+      event_type: "macula_corrected",
+      view: state.view,
+      payload: {
+        from: { x: orig.cx, y: orig.cy },
+        to: { x: state.etdrs.cx, y: state.etdrs.cy },
+      },
+    });
+    this.markInteraction();
+    void this.idle.poke("interaction");
   }
 }

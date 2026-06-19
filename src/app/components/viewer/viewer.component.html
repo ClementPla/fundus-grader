@@ -42,6 +42,10 @@
       (mousemove)="onMouseMove($event)"
       (mouseup)="onMouseUp($event)"
       (mouseleave)="onMouseUp($event)"
+      (touchstart)="onTouchStart($event)"
+      (touchmove)="onTouchMove($event)"
+      (touchend)="onTouchEnd($event)"
+      (touchcancel)="onTouchEnd($event)"
       (contextmenu)="$event.preventDefault()"
     >
       <div class="transform-host" #host>
@@ -96,26 +100,47 @@
                 [attr.stroke-dasharray]="etdrs().dashed ? '4 3' : null"
                 vector-effect="non-scaling-stroke"
               ></circle>
-              <line
-                [attr.x1]="cs.etdrs.cx - 6"
-                [attr.y1]="cs.etdrs.cy"
-                [attr.x2]="cs.etdrs.cx + 6"
-                [attr.y2]="cs.etdrs.cy"
-                [attr.stroke]="etdrs().strokeColor"
-                stroke-width="1"
-                [attr.stroke-opacity]="etdrs().strokeOpacity"
-                vector-effect="non-scaling-stroke"
-              ></line>
-              <line
-                [attr.x1]="cs.etdrs.cx"
-                [attr.y1]="cs.etdrs.cy - 6"
-                [attr.x2]="cs.etdrs.cx"
-                [attr.y2]="cs.etdrs.cy + 6"
-                [attr.stroke]="etdrs().strokeColor"
-                stroke-width="1"
-                [attr.stroke-opacity]="etdrs().strokeOpacity"
-                vector-effect="non-scaling-stroke"
-              ></line>
+              <!-- Macula center marker: drag to correct, fades on hover so it
+                   doesn't obscure the fovea while reading. -->
+              <g
+                class="macula-center"
+                [class.dragging]="isDraggingMacula"
+                [class.idle]="maculaIdle() && !isDraggingMacula"
+                (mousedown)="startDragMacula($event)"
+                title="Drag to correct the macula position"
+              >
+                <line
+                  [attr.x1]="cs.etdrs.cx - 6"
+                  [attr.y1]="cs.etdrs.cy"
+                  [attr.x2]="cs.etdrs.cx + 6"
+                  [attr.y2]="cs.etdrs.cy"
+                  [attr.stroke]="etdrs().strokeColor"
+                  stroke-width="1"
+                  [attr.stroke-opacity]="etdrs().strokeOpacity"
+                  vector-effect="non-scaling-stroke"
+                ></line>
+                <line
+                  [attr.x1]="cs.etdrs.cx"
+                  [attr.y1]="cs.etdrs.cy - 6"
+                  [attr.x2]="cs.etdrs.cx"
+                  [attr.y2]="cs.etdrs.cy + 6"
+                  [attr.stroke]="etdrs().strokeColor"
+                  stroke-width="1"
+                  [attr.stroke-opacity]="etdrs().strokeOpacity"
+                  vector-effect="non-scaling-stroke"
+                ></line>
+                <!-- Larger transparent hit-area so the handle is easy to grab. -->
+                <circle
+                  [attr.cx]="cs.etdrs.cx"
+                  [attr.cy]="cs.etdrs.cy"
+                  r="15"
+                  fill="transparent"
+                  [attr.stroke]="etdrs().strokeColor"
+                  [attr.stroke-width]="etdrs().strokeWidth + 0.5"
+                  [attr.stroke-opacity]="etdrs().strokeOpacity"
+                  vector-effect="non-scaling-stroke"
+                ></circle>
+              </g>
             </g>
           </ng-container>
         </svg>
@@ -383,7 +408,7 @@
               class="dd-input"
               [ngModel]="ddRadiiText()"
               (ngModelChange)="setDdRadiiText($event)"
-              placeholder="1, 2, 3"
+              placeholder="1, 2"
             />
           </div>
         </ng-container>

@@ -48,6 +48,9 @@ button.toggled {
   cursor: grab;
   background: #000;
   user-select: none;
+  /* Take over touch gestures (pan/pinch) instead of letting the browser
+     scroll or page-zoom. */
+  touch-action: none;
 }
 .canvas-stage.dragging {
   cursor: grabbing;
@@ -212,6 +215,48 @@ button.link:hover {
 
 .etdrs-rings {
   pointer-events: none;
+}
+
+/* Macula center marker: grabbable handle for correcting the macula position.
+   After a few idle seconds it auto-dims to a faint, dashed ring (center
+   crosshair removed) so it doesn't obscure the fovea while reading. Hovering it
+   — or actively dragging — restores full visibility. */
+.macula-center {
+  pointer-events: auto;
+  cursor: grab;
+  transition: opacity 0.6s ease-in-out;
+}
+.macula-center line,
+.macula-center circle {
+  transition:
+    opacity 0.6s ease-in-out,
+    stroke-dasharray 0.6s ease-in-out;
+}
+
+/* Idle (dimmed) state */
+.macula-center.idle {
+  opacity: 0.22;
+}
+.macula-center.idle line {
+  opacity: 0;
+}
+.macula-center.idle circle {
+  stroke-dasharray: 2 4;
+}
+
+/* Hover / drag restore full visibility */
+.macula-center:hover,
+.macula-center.dragging {
+  opacity: 1;
+}
+.macula-center.idle:hover line {
+  opacity: 1;
+}
+.macula-center.idle:hover circle {
+  stroke-dasharray: none;
+}
+.macula-center.dragging {
+  cursor: grabbing;
 }
 
 @keyframes march {

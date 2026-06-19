@@ -6,6 +6,7 @@ import { AppStateService } from "../../services/app-state.service";
 import { IdleService } from "../../services/idle.service";
 import { ViewerComponent } from "../viewer/viewer.component";
 import { GradingFormComponent } from "../grading-form/grading-form.component";
+import { GradeInfoComponent } from "../grade-info/grade-info.component";
 import { AiRevealComponent } from "../ai-reveal/ai-reveal.component";
 import { AiDecision, CasePayload, SubmitPayload } from "../../types";
 
@@ -26,6 +27,7 @@ interface PendingGrade {
     CommonModule,
     ViewerComponent,
     GradingFormComponent,
+    GradeInfoComponent,
     AiRevealComponent,
   ],
   template: `
@@ -53,6 +55,11 @@ interface PendingGrade {
       </div>
 
       <div class="main" *ngIf="caseData() as cd">
+        <app-grade-info
+          class="info-pane"
+          [selectedIcdr]="selectedIcdr()"
+          [selectedDme]="selectedDme()"
+        ></app-grade-info>
         <div class="viewer-pane">
           <app-viewer
             #viewer
@@ -92,6 +99,8 @@ interface PendingGrade {
             (submitGrading)="onSubmit($event)"
             (skip)="onSkip()"
             (fieldChanged)="onFieldChanged($event)"
+            (icdrSelected)="selectedIcdr.set($event)"
+            (dmeSelected)="selectedDme.set($event)"
           ></app-grading-form>
         </div>
       </div>
@@ -169,8 +178,12 @@ interface PendingGrade {
       .main {
         flex: 1;
         display: grid;
-        grid-template-columns: 1fr 380px;
+        grid-template-columns: auto 1fr 380px;
         min-height: 0;
+      }
+      .info-pane {
+        min-height: 0;
+        overflow: hidden;
       }
       .viewer-pane {
         min-width: 0;
@@ -209,6 +222,10 @@ export class SessionComponent implements OnInit, OnDestroy {
 
   stage = signal<Stage>("grading");
   pendingGrade = signal<PendingGrade | null>(null);
+  // Mirror the form's current grade selection so the grade-info accordion can
+  // auto-expand the matching panels.
+  selectedIcdr = signal<number | null>(null);
+  selectedDme = signal<number | null>(null);
   private aiRevealAt: number | null = null;
 
   constructor(
@@ -274,6 +291,8 @@ export class SessionComponent implements OnInit, OnDestroy {
       this.caseData.set(data);
       this.setStage("grading");
       this.pendingGrade.set(null);
+      this.selectedIcdr.set(null);
+      this.selectedDme.set(null);
       this.aiRevealAt = null;
       this.idle.start("macula", this.idleThresholdMs);
     } catch (e) {

@@ -236,6 +236,10 @@ export class GradingFormComponent implements OnChanges {
     field: string;
     value: unknown;
   }>();
+  /** Current grade selections, emitted so the editor can sync the grade-info
+   *  accordion. Distinct from fieldChanged (which is for event logging). */
+  @Output() icdrSelected = new EventEmitter<number>();
+  @Output() dmeSelected = new EventEmitter<number>();
 
   icdr = signal<number | null>(null);
   dme = signal<number | null>(null);
@@ -282,6 +286,7 @@ export class GradingFormComponent implements OnChanges {
       field: "icdr",
       value: prev !== null && prev !== v ? { from: prev, to: v } : v,
     });
+    this.icdrSelected.emit(v);
   }
   setDme(v: number) {
     const prev = this.dme();
@@ -290,6 +295,7 @@ export class GradingFormComponent implements OnChanges {
       field: "dme",
       value: prev !== null && prev !== v ? { from: prev, to: v } : v,
     });
+    this.dmeSelected.emit(v);
   }
   setConfidence(v: number) {
     this.confidence.set(v);

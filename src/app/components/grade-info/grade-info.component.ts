@@ -6,14 +6,14 @@ import {
   signal,
 } from "@angular/core";
 import { CommonModule } from "@angular/common";
+import { TranslocoPipe } from "@jsverse/transloco";
 
 interface GradeInfo {
   value: number;
+  /** Universal short code (e.g. "R0", "M2"); not translated. The label and
+   *  description are pulled from the `grades.*` translation keys by value. */
   short: string;
-  label: string;
-  /** Free-text clinical description shown in the expanded accordion panel.
-   *  Edit these strings to refine the guidance shown to readers. */
-  desc: string;
+  image: string | null;
 }
 
 /**
@@ -30,7 +30,7 @@ interface GradeInfo {
 @Component({
   selector: "app-grade-info",
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslocoPipe],
   template: `
     <div class="grade-info" [class.collapsed]="collapsed()">
       <!-- Collapsed rail: just a button to reopen -->
@@ -38,58 +38,68 @@ interface GradeInfo {
         *ngIf="collapsed()"
         class="rail-toggle"
         (click)="collapsed.set(false)"
-        title="Show grade guidance"
+        [title]="'gradeInfo.show' | transloco"
       >
         <span class="chev">›</span>
-        <span class="rail-label">Grades</span>
+        <span class="rail-label">{{ "gradeInfo.grades" | transloco }}</span>
       </button>
 
       <ng-container *ngIf="!collapsed()">
         <div class="head">
-          <h3>Grade guidance</h3>
+          <h3>{{ "gradeInfo.title" | transloco }}</h3>
           <button
             class="collapse"
             (click)="collapsed.set(true)"
-            title="Hide grade guidance"
+            [title]="'gradeInfo.hide' | transloco"
           >
             ‹
           </button>
         </div>
 
         <div class="group">
-          <div class="group-title">ICDR — diabetic retinopathy</div>
+          <div class="group-title">{{ "gradeInfo.icdrGroup" | transloco }}</div>
           <div
             class="acc-item"
             *ngFor="let g of icdrInfo"
             [class.open]="openIcdr() === g.value"
             [class.selected]="selectedIcdr === g.value"
+            [style.--sev-color]="severityColor('icdr', g.value)"
           >
             <button class="acc-head" (click)="toggleIcdr(g.value)">
               <span class="badge">{{ g.short }}</span>
-              <span class="acc-label">{{ g.label }}</span>
+              <span class="acc-label">{{
+                "grades.icdr." + g.value + ".label" | transloco
+              }}</span>
               <span class="chev">{{ openIcdr() === g.value ? "▾" : "▸" }}</span>
             </button>
             <div class="acc-body" *ngIf="openIcdr() === g.value">
-              <p>{{ g.desc }}</p>
+              <p>{{ "grades.icdr." + g.value + ".desc" | transloco }}</p>
+            @if(g.image){
+              <img [src]="g.image" [alt]="g.short" />
+            }
             </div>
+
           </div>
         </div>
 
         <div class="group">
-          <div class="group-title">DME — macular edema</div>
+          <div class="group-title">{{ "gradeInfo.dmeGroup" | transloco }}</div>
           <div
             class="acc-item"
             *ngFor="let g of dmeInfo"
             [class.open]="openDme() === g.value"
             [class.selected]="selectedDme === g.value"
+            [style.--sev-color]="severityColor('dme', g.value)"
           >
             <button class="acc-head" (click)="toggleDme(g.value)">
               <span class="badge">{{ g.short }}</span>
-              <span class="acc-label">{{ g.label }}</span>
+              <span class="acc-label">{{
+                "grades.dme." + g.value + ".label" | transloco
+              }}</span>
               <span class="chev">{{ openDme() === g.value ? "▾" : "▸" }}</span>
             </button>
             <div class="acc-body" *ngIf="openDme() === g.value">
-              <p>{{ g.desc }}</p>
+              <p>{{ "grades.dme." + g.value + ".desc" | transloco }}</p>
             </div>
           </div>
         </div>
@@ -166,6 +176,10 @@ interface GradeInfo {
       }
       .acc-item {
         border: 1px solid var(--border);
+        /* Subtle severity cue: a muted left stripe (green→red, set per grade
+           via the --sev-color custom property). */
+        border-left: 3px solid
+          color-mix(in srgb, var(--sev-color, var(--border)) 55%, transparent);
         border-radius: var(--radius);
         margin-bottom: 6px;
         overflow: hidden;
@@ -173,6 +187,12 @@ interface GradeInfo {
       }
       .acc-item.selected {
         border-color: var(--accent);
+        /* Keep the severity stripe legible (a touch stronger) when selected. */
+        border-left-color: color-mix(
+          in srgb,
+          var(--sev-color, var(--accent)) 75%,
+          transparent
+        );
       }
       .acc-head {
         display: flex;
@@ -193,15 +213,15 @@ interface GradeInfo {
         font-size: 12px;
         font-weight: 600;
         min-width: 28px;
-        color: var(--text);
+        /* Tint the grade code with its severity color (subtle secondary cue). */
+        color: color-mix(in srgb, var(--sev-color, var(--text)) 80%, var(--text));
       }
       .acc-label {
         flex: 1;
         font-size: 13px;
         color: var(--text-dim);
       }
-      .acc-item.selected .acc-label,
-      .acc-item.selected .badge {
+      .acc-item.selected .acc-label {
         color: var(--text);
       }
       .chev {
@@ -216,6 +236,16 @@ interface GradeInfo {
         font-size: 12.5px;
         line-height: 1.45;
         color: var(--text-dim);
+        /* Honor \n line breaks in multi-line grade descriptions. */
+        white-space: pre-line;
+      }
+      .acc-body img {
+        display: block;
+        width: 100%;
+        height: auto;
+        margin-top: 8px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
       }
     `,
   ],
@@ -229,73 +259,24 @@ export class GradeInfoComponent implements OnChanges {
   openIcdr = signal<number | null>(null);
   openDme = signal<number | null>(null);
 
-  // ICDR (International Clinical Diabetic Retinopathy) severity scale.
-  // Edit these descriptions to refine the in-app guidance.
+  // ICDR (International Clinical Diabetic Retinopathy) severity scale. Labels
+  // and descriptions live under `grades.icdr.*` in the translation dictionaries.
   icdrInfo: GradeInfo[] = [
-    {
-      value: 0,
-      short: "R0",
-      label: "No DR",
-      desc: "No visible abnormalities.",
-    },
-    {
-      value: 1,
-      short: "R1",
-      label: "Mild NPDR",
-      desc: "Microaneurysms only.",
-    },
-    {
-      value: 2,
-      short: "R2",
-      label: "Moderate NPDR",
-      desc: "More than microaneurysms but less than severe NPDR (e.g. dot/blot hemorrhages, hard exudates, cotton-wool spots).",
-    },
-    {
-      value: 3,
-      short: "R3",
-      label: "Severe NPDR",
-      desc: "Any of the 4-2-1 rule and no signs of PDR: >20 intraretinal hemorrhages in each of 4 quadrants; definite venous beading in ≥2 quadrants; prominent IRMA in ≥1 quadrant.",
-    },
-    {
-      value: 4,
-      short: "R4",
-      label: "PDR",
-      desc: "Neovascularization (disc or elsewhere) and/or vitreous or preretinal hemorrhage.",
-    },
-    {
-      value: 6,
-      short: "R6",
-      label: "Ungradable",
-      desc: "Image quality is insufficient to assign a reliable DR grade.",
-    },
+    { value: 0, short: "R0", image: null },
+    { value: 1, short: "R1", image: null },
+    { value: 2, short: "R2", image: "assets/HEM_4.png" },
+    { value: 3, short: "R3", image: "assets/irregularities.png" },
+    { value: 4, short: "R4", image: "assets/IRMA.png" },
+    { value: 6, short: "R6", image: null },
   ];
 
-  // DME (Diabetic Macular Edema) scale used by this study.
+  // DME (Diabetic Macular Edema) scale. Labels and descriptions live under
+  // `grades.dme.*` in the translation dictionaries.
   dmeInfo: GradeInfo[] = [
-    {
-      value: 0,
-      short: "M0",
-      label: "No DME",
-      desc: "No retinal thickening or hard exudates in the posterior pole.",
-    },
-    {
-      value: 1,
-      short: "M1",
-      label: "Mild",
-      desc: "Retinal thickening or hard exudates in the posterior pole but distant from the center of the macula.",
-    },
-    {
-      value: 2,
-      short: "M2",
-      label: "Severe",
-      desc: "Retinal thickening or hard exudates involving or approaching the center of the macula.",
-    },
-    {
-      value: 6,
-      short: "M6",
-      label: "Ungradable",
-      desc: "Image quality is insufficient to assign a reliable DME grade.",
-    },
+    { value: 0, short: "M0", image: null },
+    { value: 1, short: "M1", image: null },
+    { value: 2, short: "M2", image: null },
+    { value: 6, short: "M6", image: null },
   ];
 
   ngOnChanges(changes: SimpleChanges) {
@@ -310,5 +291,28 @@ export class GradeInfoComponent implements OnChanges {
   }
   toggleDme(value: number) {
     this.openDme.set(this.openDme() === value ? null : value);
+  }
+
+  // Severity color ramp (green → red), kept close to the theme's success/warn/
+  // danger hues. Ungradable (6) is neutral grey since it isn't a severity.
+  private readonly SEVERITY_COLORS: Record<"icdr" | "dme", Record<number, string>> = {
+    icdr: {
+      0: "#5fb874", // No DR — green (--success)
+      1: "#9bbf5f", // Mild — yellow-green
+      2: "#e0a437", // Moderate — amber (--warn)
+      3: "#e0793f", // Severe — orange
+      4: "#e35d6a", // PDR — red (--danger)
+      6: "#6b7280", // Ungradable — grey (--text-faint)
+    },
+    dme: {
+      0: "#5fb874", // No DME — green
+      1: "#e0a437", // Mild — amber
+      2: "#e35d6a", // Severe — red
+      6: "#6b7280", // Ungradable — grey
+    },
+  };
+
+  severityColor(scale: "icdr" | "dme", value: number): string {
+    return this.SEVERITY_COLORS[scale][value] ?? "#6b7280";
   }
 }

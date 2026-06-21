@@ -16,6 +16,7 @@ import {
 } from "@angular/core";
 import { CommonModule } from "@angular/common";
 import { FormsModule } from "@angular/forms";
+import { TranslocoPipe } from "@jsverse/transloco";
 import { ApiService } from "../../services/api.service";
 import { IdleService } from "../../services/idle.service";
 import {
@@ -46,7 +47,7 @@ const OPTIC_DISC_KEYWORDS = ["optic disc", "optic-disc", "disc"];
 @Component({
   selector: "app-viewer",
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, TranslocoPipe],
   templateUrl: "./viewer.component.html",
   styleUrl: "./viewer.component.scss",
 })
@@ -110,7 +111,7 @@ export class ViewerComponent
   private mouseSampleFlushTimer: number | null = null;
   private caseStartedAtPerf = 0;
 
-  private readonly MOUSE_SAMPLE_INTERVAL_MS = 200;
+  private readonly MOUSE_SAMPLE_INTERVAL_MS = 100;
   private readonly MOUSE_SAMPLE_FLUSH_MS = 1500;
 
   /** Macula (ETDRS center) drag-to-correct state. Public: read by the template
@@ -118,15 +119,22 @@ export class ViewerComponent
   isDraggingMacula = false;
   private maculaDragOrig: { cx: number; cy: number } | null = null;
 
-  /** Auto-dim state for the macula marker: becomes true after a few idle
-   *  seconds so it stops obscuring the fovea. Hovering it restores full
-   *  visibility (handled in CSS). The timer resets on any pointer movement. */
+  /** Auto-dim state for the macula marker: becomes true a short moment after a
+   *  case/view loads so it stops obscuring the fovea. Once dimmed it stays
+   *  dimmed regardless of pan/zoom — only hovering the marker restores full
+   *  visibility (handled in CSS). */
   maculaIdle = signal(false);
   private maculaIdleTimer: number | null = null;
-  private readonly MACULA_IDLE_MS = 3000;
+  private readonly MACULA_IDLE_MS = 1000;
 
   zoomLabel = signal("100%");
   panelOpen = signal(true);
+
+  /** Whether illumination-corrected (preprocessed) images are shown. This is a
+   *  single persistent preference shared across both views (macula/OD) and all
+   *  cases — stored in localStorage so it also survives restarts. */
+  preprocessOn = signal<boolean>(this.readPreprocessPref());
+  private readonly PREPROCESS_STORAGE_KEY = "fg.preprocess";
 
   // Shared style for all lesion classes
   lesions = signal<GroupStyle>({
@@ -215,7 +223,6 @@ export class ViewerComponent
         loaded: false,
         width: v.width,
         height: v.height,
-        preprocessed: false,
         overlays,
         etdrs: this.computeEtdrs(overlays, v),
         scale: 1,
@@ -337,12 +344,8 @@ export class ViewerComponent
     const previous = this.currentView;
     this.currentView = view;
     const state = this.currentViewState()!;
-    const data = this.viewData(view)!;
 
-    const useProcessed = state.preprocessed && data.preprocessed_uri;
-    this.imgEl.nativeElement.src = formatTauriUri(
-      useProcessed ? data.preprocessed_uri! : data.raw_uri,
-    );
+    void this.applyImageSource();
     this.updateSvgViewBox(state);
     this.applyTransform();
     this.resetMaculaIdle();
@@ -471,8 +474,6 @@ export class ViewerComponent
   }
 
   onMouseMove(ev: MouseEvent) {
-    // Any pointer movement keeps the macula marker awake.
-    this.resetMaculaIdle();
     // Macula correction takes priority over pan/sample while active.
     if (this.isDraggingMacula) {
       this.moveMaculaTo(ev);
@@ -525,14 +526,12 @@ export class ViewerComponent
       this.touchLastX = ev.touches[0].clientX;
       this.touchLastY = ev.touches[0].clientY;
     }
-    this.resetMaculaIdle();
   }
 
   onTouchMove(ev: TouchEvent) {
     const state = this.currentViewState();
     if (!state) return;
     ev.preventDefault();
-    this.resetMaculaIdle();
 
     if (this.touchMode === "pinch" && ev.touches.length >= 2) {
       const rect = this.stage.nativeElement.getBoundingClientRect();
@@ -642,45 +641,70 @@ export class ViewerComponent
     });
   }
 
-  async togglePreprocessing() {
-    const state = this.currentViewState();
-    if (!state) return;
-    const data = this.viewData(state.view)!;
+  private readPreprocessPref(): boolean {
+    try {
+      return localStorage.getItem("fg.preprocess") === "1";
+    } catch {
+      return false;
+    }
+  }
 
-    state.preprocessed = !state.preprocessed;
+  /** Set the displayed image for the current view according to preprocessOn,
+   *  lazily computing & caching the processed image per view on first use. */
+  private async applyImageSource() {
+    const view = this.currentView;
+    const data = this.viewData(view);
+    if (!data) return;
 
-    if (state.preprocessed) {
-      // Lazy-compute the processed image. Cache the resulting blob URL on
-      // data.preprocessed_uri so subsequent toggles are instant.
-      if (
-        !data.preprocessed_uri ||
-        !data.preprocessed_uri.startsWith("blob:")
-      ) {
-        try {
-          const buf = await invoke<ArrayBuffer>("preprocess_case_image", {
-            caseId: this.caseData.case_id,
-            view: state.view,
-          });
-          const blob = new Blob([buf], { type: "image/jpeg" });
-          data.preprocessed_uri = URL.createObjectURL(blob);
-        } catch (err) {
-          console.error("preprocess_case_image failed:", err);
-          state.preprocessed = false;
-          return;
-        }
-      }
-      // Blob URLs are normal URLs — no formatTauriUri wrapping needed.
-      this.imgEl.nativeElement.src = data.preprocessed_uri!;
-    } else {
+    if (!this.preprocessOn()) {
       this.imgEl.nativeElement.src = formatTauriUri(data.raw_uri);
+      return;
     }
 
+    // Lazy-compute the processed image; cache the blob URL on the view so
+    // subsequent switches/toggles are instant.
+    if (!data.preprocessed_uri || !data.preprocessed_uri.startsWith("blob:")) {
+      try {
+        const buf = await invoke<ArrayBuffer>("preprocess_case_image", {
+          caseId: this.caseData.case_id,
+          view,
+        });
+        const blob = new Blob([buf], { type: "image/jpeg" });
+        data.preprocessed_uri = URL.createObjectURL(blob);
+      } catch (err) {
+        console.error("preprocess_case_image failed:", err);
+        this.preprocessOn.set(false);
+        this.imgEl.nativeElement.src = formatTauriUri(data.raw_uri);
+        return;
+      }
+    }
+    // A view switch may have raced the await — don't clobber the new image.
+    if (this.currentView !== view) return;
+    // Blob URLs are normal URLs — no formatTauriUri wrapping needed.
+    this.imgEl.nativeElement.src = data.preprocessed_uri!;
+  }
+
+  async togglePreprocessing() {
+    this.preprocessOn.set(!this.preprocessOn());
+    try {
+      localStorage.setItem(
+        this.PREPROCESS_STORAGE_KEY,
+        this.preprocessOn() ? "1" : "0",
+      );
+    } catch {
+      // Persistence is best-effort.
+    }
+
+    await this.applyImageSource();
+
+    // applyImageSource may have flipped the flag back off on failure.
+    const on = this.preprocessOn();
     void this.api.logEvent({
       event_type: "preprocess_toggle",
-      view: state.view,
-      payload: { on: state.preprocessed },
+      view: this.currentView,
+      payload: { on },
     });
-    this.preprocessToggle.emit({ view: state.view, on: state.preprocessed });
+    this.preprocessToggle.emit({ view: this.currentView, on });
     this.markInteraction();
     void this.idle.poke("preprocess_toggle");
   }
@@ -922,8 +946,10 @@ export class ViewerComponent
     state.etdrs.cy = Math.max(0, Math.min(state.height - 1, imgY));
   }
 
-  /** Restore the macula marker to full visibility and (re)arm the idle timer
-   *  that dims it again after a few seconds. */
+  /** Show the macula marker, then arm a timer to dim it again shortly after.
+   *  Called on case/view load so the marker is briefly visible before fading;
+   *  it is intentionally NOT called on pan/zoom — once dimmed it only comes
+   *  back on hover. */
   private resetMaculaIdle() {
     if (this.maculaIdle()) this.maculaIdle.set(false);
     if (this.maculaIdleTimer !== null) window.clearTimeout(this.maculaIdleTimer);

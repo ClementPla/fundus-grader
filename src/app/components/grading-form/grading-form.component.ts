@@ -9,6 +9,7 @@ import {
 } from "@angular/core";
 import { CommonModule } from "@angular/common";
 import { FormsModule } from "@angular/forms";
+import { TranslocoPipe } from "@jsverse/transloco";
 import { CasePayload } from "../../types";
 
 /**
@@ -21,11 +22,11 @@ import { CasePayload } from "../../types";
 @Component({
   selector: "app-grading-form",
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, TranslocoPipe],
   template: `
     <form class="form" (submit)="onSubmit($event)" [class.disabled]="disabled">
       <div class="section">
-        <label>ICDR grade</label>
+        <label>{{ "grading.icdrGrade" | transloco }}</label>
         <div class="opts">
           <button
             type="button"
@@ -36,13 +37,15 @@ import { CasePayload } from "../../types";
             [disabled]="disabled"
           >
             <span class="opt-label">{{ opt.short }}</span>
-            <span class="opt-desc faint">{{ opt.label }}</span>
+            <span class="opt-desc faint">{{
+              "grades.icdr." + opt.value + ".label" | transloco
+            }}</span>
           </button>
         </div>
       </div>
 
       <div class="section">
-        <label>DME</label>
+        <label>{{ "grading.dme" | transloco }}</label>
         <div class="opts">
           <button
             type="button"
@@ -53,13 +56,20 @@ import { CasePayload } from "../../types";
             [disabled]="disabled"
           >
             <span class="opt-label">{{ opt.short }}</span>
-            <span class="opt-desc faint">{{ opt.label }}</span>
+            <span class="opt-desc faint">{{
+              "grades.dme." + opt.value + ".label" | transloco
+            }}</span>
           </button>
         </div>
       </div>
 
       <div class="section">
-        <label>Confidence <span class="faint">— how sure are you?</span></label>
+        <label
+          >{{ "grading.confidence" | transloco }}
+          <span class="faint">{{
+            "grading.confidenceHint" | transloco
+          }}</span></label
+        >
         <div class="opts compact">
           <button
             type="button"
@@ -71,13 +81,17 @@ import { CasePayload } from "../../types";
             {{ n }}
           </button>
         </div>
-        <span class="faint compact-help">1 = guessing, 5 = certain</span>
+        <span class="faint compact-help">{{
+          "grading.confidenceHelp" | transloco
+        }}</span>
       </div>
 
       <div class="section">
         <label
-          >Difficulty
-          <span class="faint">— how hard was this case?</span></label
+          >{{ "grading.difficulty" | transloco }}
+          <span class="faint">{{
+            "grading.difficultyHint" | transloco
+          }}</span></label
         >
         <div class="opts">
           <button
@@ -87,13 +101,18 @@ import { CasePayload } from "../../types";
             (click)="setDifficulty(opt.value)"
             [disabled]="disabled"
           >
-            {{ opt.label }}
+            {{ opt.key | transloco }}
           </button>
         </div>
       </div>
 
       <div class="section">
-        <label>Notes <span class="faint">— optional, free text</span></label>
+        <label
+          >{{ "grading.notes" | transloco }}
+          <span class="faint">{{
+            "grading.notesHint" | transloco
+          }}</span></label
+        >
         <textarea
           [(ngModel)]="notes"
           name="notes"
@@ -109,7 +128,7 @@ import { CasePayload } from "../../types";
           (click)="skip.emit()"
           [disabled]="disabled"
         >
-          Skip case
+          {{ "grading.skipCase" | transloco }}
         </button>
         <span class="spacer"></span>
         <button
@@ -120,7 +139,7 @@ import { CasePayload } from "../../types";
           {{ submitLabel }}
         </button>
       </div>
-      <p class="faint">Submission is final.</p>
+      <p class="faint">{{ "grading.final" | transloco }}</p>
     </form>
   `,
   styles: [
@@ -247,24 +266,25 @@ export class GradingFormComponent implements OnChanges {
   difficulty = signal<number | null>(null);
   notes = "";
 
+  // Short codes are universal; labels come from `grades.*` translation keys.
   icdrOpts = [
-    { value: 0, short: "R0", label: "No DR" },
-    { value: 1, short: "R1", label: "Mild NPDR" },
-    { value: 2, short: "R2", label: "Moderate NPDR" },
-    { value: 3, short: "R3", label: "Severe NPDR" },
-    { value: 4, short: "R4", label: "PDR" },
-    { value: 6, short: "R6", label: "Ungradable" },
+    { value: 0, short: "R0" },
+    { value: 1, short: "R1" },
+    { value: 2, short: "R2" },
+    { value: 3, short: "R3" },
+    { value: 4, short: "R4" },
+    { value: 6, short: "R6" },
   ];
   dmeOpts = [
-    { value: 0, short: "M0", label: "No DME" },
-    { value: 1, short: "M1", label: "Mild" },
-    { value: 2, short: "M2", label: "Severe" },
-    { value: 6, short: "M6", label: "Ungradable" },
+    { value: 0, short: "M0" },
+    { value: 1, short: "M1" },
+    { value: 2, short: "M2" },
+    { value: 6, short: "M6" },
   ];
   difficultyOpts = [
-    { value: 1, label: "Easy" },
-    { value: 2, label: "Moderate" },
-    { value: 3, label: "Hard" },
+    { value: 1, key: "grading.easy" },
+    { value: 2, key: "grading.moderate" },
+    { value: 3, key: "grading.hard" },
   ];
 
   ngOnChanges(changes: SimpleChanges) {

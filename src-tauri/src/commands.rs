@@ -333,6 +333,10 @@ pub struct SubmitPayload {
     pub ai_icdr_shown: Option<i64>,
     pub ai_dme_shown: Option<i64>,
     pub ai_decision: Option<String>,
+    /// Free-text comment written during the AI-reveal (adjudication) phase.
+    /// Stored separately from `notes` so it never overwrites the reader's
+    /// original grading notes.
+    pub adjudication_notes: Option<String>,
 }
 
 const ALLOWED_ICDR: &[i64] = &[0, 1, 2, 3, 4, 6];
@@ -405,8 +409,8 @@ pub async fn submit_case(state: State<'_, AppState>, submission: SubmitPayload) 
                 active_time_ms_macula_pre_ai, active_time_ms_macula_post_ai,
                 active_time_ms_od_pre_ai,     active_time_ms_od_post_ai,
                 first_interaction_ms_macula, first_interaction_ms_od,
-                first_overlay_toggle_off_ms
-             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)",
+                first_overlay_toggle_off_ms, adjudication_notes
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)",
             params![
                 case.assignment_id,
                 now,
@@ -429,6 +433,7 @@ pub async fn submit_case(state: State<'_, AppState>, submission: SubmitPayload) 
                 first_macula,
                 first_od,
                 case.first_overlay_toggle_off_ms,
+                submission.adjudication_notes,
             ],
         )?;
         let submission_id: i64 = tx.last_insert_rowid();
@@ -491,8 +496,20 @@ pub async fn skip_case(state: State<'_, AppState>) -> Result<()> {
     state.with(|s| -> Result<()> {
         if let Some(case) = s.active_case.take() {
             let results = s.results_db.as_ref().unwrap();
+            // Re-queue at the end: keep it pending but push its order_index past
+            // every other assignment for the same reader+phase, otherwise
+            // next_case (ORDER BY order_index ASC) would just hand back the same
+            // case we skipped.
             results.execute(
-                "UPDATE assignments SET status='pending' WHERE id=?1",
+                "UPDATE assignments
+                 SET status='pending',
+                     order_index = (
+                         SELECT COALESCE(MAX(a2.order_index), 0) + 1
+                         FROM assignments a2
+                         WHERE a2.reader_id = assignments.reader_id
+                           AND a2.phase = assignments.phase
+                     )
+                 WHERE id=?1",
                 params![case.assignment_id],
             )?;
         }

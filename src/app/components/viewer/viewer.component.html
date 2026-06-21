@@ -6,7 +6,7 @@
         [class.active]="v.view === currentView"
         (click)="switchView(v.view)"
       >
-        {{ v.view === "macula" ? "Macula" : "Optic disc" }}
+        {{ (v.view === "macula" ? "viewer.macula" : "viewer.opticDisc") | transloco }}
       </button>
     </div>
     <div class="spacer"></div>
@@ -14,22 +14,24 @@
     <ng-container *ngIf="preprocessingAvailable">
       <button
         (click)="togglePreprocessing()"
-        [class.toggled]="currentViewState()?.preprocessed"
-        title="Toggle illumination correction"
+        [class.toggled]="preprocessOn()"
+        [title]="'viewer.togglePreprocessing' | transloco"
       >
-        {{ currentViewState()?.preprocessed ? "Preprocessed" : "Raw" }}
+        {{ (preprocessOn() ? "viewer.preprocessed" : "viewer.raw") | transloco }}
       </button>
     </ng-container>
 
-    <button (click)="resetView()" title="Reset zoom and pan">Fit</button>
+    <button (click)="resetView()" [title]="'viewer.resetView' | transloco">
+      {{ "viewer.fit" | transloco }}
+    </button>
     <span class="faint mono">{{ zoomLabel() }}</span>
     <button
       class="panel-toggle"
       (click)="togglePanel()"
       [class.toggled]="panelOpen()"
-      [title]="panelOpen() ? 'Hide overlay controls' : 'Show overlay controls'"
+      [title]="(panelOpen() ? 'viewer.hideOverlayControls' : 'viewer.showOverlayControls') | transloco"
     >
-      {{ panelOpen() ? "›" : "‹" }} Overlays
+      {{ panelOpen() ? "›" : "‹" }} {{ "viewer.overlays" | transloco }}
     </button>
   </div>
 
@@ -100,14 +102,14 @@
                 [attr.stroke-dasharray]="etdrs().dashed ? '4 3' : null"
                 vector-effect="non-scaling-stroke"
               ></circle>
-              <!-- Macula center marker: drag to correct, fades on hover so it
-                   doesn't obscure the fovea while reading. -->
+              <!-- Macula center marker: drag to correct; auto-dims after a few
+                   idle seconds so it doesn't obscure the fovea while reading. -->
               <g
                 class="macula-center"
                 [class.dragging]="isDraggingMacula"
                 [class.idle]="maculaIdle() && !isDraggingMacula"
                 (mousedown)="startDragMacula($event)"
-                title="Drag to correct the macula position"
+                [attr.title]="'viewer.maculaDragTitle' | transloco"
               >
                 <line
                   [attr.x1]="cs.etdrs.cx - 6"
@@ -151,21 +153,21 @@
       <!-- Lesion group: chip-row of toggleable classes, then shared style sliders -->
       <div class="panel-section" *ngIf="currentViewState() as cs">
         <div class="section-head">
-          <h4>Lesions</h4>
+          <h4>{{ "viewer.lesions" | transloco }}</h4>
           <div class="head-actions">
             <button
               class="link"
               (click)="showAllLesions(cs)"
-              title="Show all lesion classes"
+              [title]="'viewer.showAllTitle' | transloco"
             >
-              All
+              {{ "viewer.all" | transloco }}
             </button>
             <button
               class="link"
               (click)="hideAllLesions(cs)"
-              title="Hide all lesion classes"
+              [title]="'viewer.hideAllTitle' | transloco"
             >
-              None
+              {{ "viewer.none" | transloco }}
             </button>
           </div>
         </div>
@@ -180,19 +182,19 @@
             [class.on]="ov.visible"
             [style.--chip-color]="ov.swatch"
             (click)="setVisible(ov, !ov.visible)"
-            [title]="(ov.visible ? 'Hide ' : 'Show ') + ov.name"
+            [title]="((ov.visible ? 'viewer.hidePrefix' : 'viewer.showPrefix') | transloco) + ov.name"
           >
             <span class="dot"></span>{{ ov.name }}
           </button>
         </div>
         <ng-template #noLesions>
-          <p class="faint">No lesion overlays for this case.</p>
+          <p class="faint">{{ "viewer.noLesions" | transloco }}</p>
         </ng-template>
 
         <ng-container *ngIf="anyLesionVisible(cs)">
           <div class="slider">
             <label
-              >Fill
+              >{{ "viewer.fill" | transloco }}
               <span class="val">{{
                 fmtPct(lesions().fillOpacity)
               }}</span></label
@@ -210,7 +212,7 @@
           </div>
           <div class="slider">
             <label
-              >Stroke
+              >{{ "viewer.stroke" | transloco }}
               <span class="val">{{
                 fmtPct(lesions().strokeOpacity)
               }}</span></label
@@ -228,7 +230,7 @@
           </div>
           <div class="slider">
             <label
-              >Width
+              >{{ "viewer.width" | transloco }}
               <span class="val">{{
                 lesions().strokeWidth.toFixed(1)
               }}</span></label
@@ -245,26 +247,26 @@
             />
           </div>
           <div class="anim-row">
-            <span class="anim-label">Animate</span>
+            <span class="anim-label">{{ "viewer.animate" | transloco }}</span>
             <button
               [class.toggled]="lesions().animate === 'none'"
               (click)="updateLesions({ animate: 'none' }, 'animate')"
             >
-              Off
+              {{ "viewer.off" | transloco }}
             </button>
             <button
               [class.toggled]="lesions().animate === 'march'"
               (click)="updateLesions({ animate: 'march' }, 'animate')"
-              title="Marching dashed stroke"
+              [title]="'viewer.marchTitle' | transloco"
             >
-              March
+              {{ "viewer.march" | transloco }}
             </button>
             <button
               [class.toggled]="lesions().animate === 'pulse'"
               (click)="updateLesions({ animate: 'pulse' }, 'animate')"
-              title="Pulsing fill"
+              [title]="'viewer.pulseTitle' | transloco"
             >
-              Pulse
+              {{ "viewer.pulse" | transloco }}
             </button>
           </div>
         </ng-container>
@@ -280,14 +282,14 @@
                 [checked]="od.visible"
                 (change)="setVisible(od, $any($event.target).checked)"
               />
-              Optic disc
+              {{ "viewer.opticDiscLabel" | transloco }}
             </label>
           </h4>
         </div>
         <ng-container *ngIf="od.visible">
           <div class="slider">
             <label
-              >Stroke
+              >{{ "viewer.stroke" | transloco }}
               <span class="val">{{
                 fmtPct(this.od().strokeOpacity)
               }}</span></label
@@ -305,7 +307,7 @@
           </div>
           <div class="slider">
             <label
-              >Width
+              >{{ "viewer.width" | transloco }}
               <span class="val">{{
                 this.od().strokeWidth.toFixed(1)
               }}</span></label
@@ -327,7 +329,7 @@
               [checked]="this.od().fill"
               (change)="updateOd({ fill: $any($event.target).checked }, 'fill')"
             />
-            Fill
+            {{ "viewer.fill" | transloco }}
           </label>
         </ng-container>
       </div>
@@ -347,17 +349,17 @@
                   )
                 "
               />
-              ETDRS rings
+              {{ "viewer.etdrsRings" | transloco }}
             </label>
           </h4>
         </div>
         <p class="faint">
-          Auto-centered on the macula ({{ e.ddRadii.join(", ") }} DD from OD).
+          {{ "viewer.etdrsAuto" | transloco: { radii: e.ddRadii.join(", ") } }}
         </p>
         <ng-container *ngIf="etdrs().visible">
           <div class="slider">
             <label
-              >Stroke
+              >{{ "viewer.stroke" | transloco }}
               <span class="val">{{
                 fmtPct(etdrs().strokeOpacity)
               }}</span></label
@@ -375,7 +377,7 @@
           </div>
           <div class="slider">
             <label
-              >Width
+              >{{ "viewer.width" | transloco }}
               <span class="val">{{
                 etdrs().strokeWidth.toFixed(1)
               }}</span></label
@@ -399,10 +401,10 @@
                 updateEtdrs({ dashed: $any($event.target).checked }, 'dashed')
               "
             />
-            Dashed
+            {{ "viewer.dashed" | transloco }}
           </label>
           <div class="dd-row row">
-            <span class="faint">Rings (DD):</span>
+            <span class="faint">{{ "viewer.ringsDD" | transloco }}</span>
             <input
               type="text"
               class="dd-input"
@@ -418,10 +420,7 @@
         class="panel-section"
         *ngIf="currentViewState() && !currentViewState()!.etdrs"
       >
-        <p class="faint">
-          No optic disc overlay on this view, so ETDRS rings cannot be
-          auto-centered.
-        </p>
+        <p class="faint">{{ "viewer.noOdEtdrs" | transloco }}</p>
       </div>
     </aside>
   </div>

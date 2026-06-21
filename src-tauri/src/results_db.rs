@@ -58,6 +58,7 @@ pub fn open(path: &Path) -> Result<Connection> {
             first_interaction_ms_macula INTEGER,
             first_interaction_ms_od INTEGER,
             first_overlay_toggle_off_ms INTEGER,
+            adjudication_notes TEXT,
             reverted_at TEXT,
             revert_reason TEXT
         );
@@ -130,6 +131,15 @@ pub fn open(path: &Path) -> Result<Connection> {
     // events: stage column.
     if !column_exists(&conn, "events", "stage")? {
         conn.execute("ALTER TABLE events ADD COLUMN stage TEXT", [])?;
+    }
+
+    // submissions: adjudication (AI-reveal phase) comment, stored separately
+    // from the reader's original grading notes.
+    if !column_exists(&conn, "submissions", "adjudication_notes")? {
+        conn.execute(
+            "ALTER TABLE submissions ADD COLUMN adjudication_notes TEXT",
+            [],
+        )?;
     }
 
     // Seed defaults for fresh DBs.

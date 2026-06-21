@@ -4,10 +4,12 @@ import { Router } from "@angular/router";
 import { ApiService } from "../../services/api.service";
 import { AppStateService } from "../../services/app-state.service";
 import { IdleService } from "../../services/idle.service";
+import { TranslocoPipe, TranslocoService } from "@jsverse/transloco";
 import { ViewerComponent } from "../viewer/viewer.component";
 import { GradingFormComponent } from "../grading-form/grading-form.component";
 import { GradeInfoComponent } from "../grade-info/grade-info.component";
 import { AiRevealComponent } from "../ai-reveal/ai-reveal.component";
+import { LangToggleComponent } from "../lang-toggle/lang-toggle.component";
 import { AiDecision, CasePayload, SubmitPayload } from "../../types";
 
 type Stage = "grading" | "ai_reveal" | "editing_after_ai";
@@ -29,29 +31,32 @@ interface PendingGrade {
     GradingFormComponent,
     GradeInfoComponent,
     AiRevealComponent,
+    LangToggleComponent,
+    TranslocoPipe,
   ],
   template: `
     <div class="session-root">
       <div class="header">
         <span class="header-item">
-          <span class="dim">Reader</span>
+          <span class="dim">{{ "session.reader" | transloco }}</span>
           {{ appState.reader()?.surname }}, {{ appState.reader()?.name }}
         </span>
         <span class="header-item">
-          <span class="dim">Phase</span>
+          <span class="dim">{{ "session.phase" | transloco }}</span>
           <span class="phase-tag" [class.ai]="phase() === 'ai'">
-            {{ phase() === "ai" ? "AI assisted" : "No AI" }}
+            {{ (phase() === "ai" ? "session.aiAssisted" : "session.noAi") | transloco }}
           </span>
         </span>
         <span class="header-item" *ngIf="caseData()?.is_calibration">
-          <span class="cal-tag">Calibration case</span>
+          <span class="cal-tag">{{ "session.calibration" | transloco }}</span>
         </span>
         <span class="header-item">
-          <span class="dim">Progress</span>
+          <span class="dim">{{ "session.progress" | transloco }}</span>
           {{ progress().done }} / {{ progress().total }}
         </span>
         <span class="spacer"></span>
-        <button (click)="quit()">Exit session</button>
+        <app-lang-toggle></app-lang-toggle>
+        <button (click)="quit()">{{ "session.exit" | transloco }}</button>
       </div>
 
       <div class="main" *ngIf="caseData() as cd">
@@ -85,8 +90,8 @@ interface PendingGrade {
             [humanDme]="pendingGrade()!.dme"
             [aiIcdr]="cd.ai_icdr!"
             [aiDme]="cd.ai_dme!"
-            (keep)="onKeepGrade()"
-            (update)="onUpdateGrade()"
+            (keep)="onKeepGrade($event)"
+            (update)="onUpdateGrade($event)"
           ></app-ai-reveal>
 
           <app-grading-form
@@ -94,7 +99,9 @@ interface PendingGrade {
             [caseData]="cd"
             [disabled]="busy()"
             [submitLabel]="
-              stage() === 'editing_after_ai' ? 'Confirm final' : 'Submit'
+              (stage() === 'editing_after_ai'
+                ? 'grading.confirmFinal'
+                : 'grading.submit') | transloco
             "
             (submitGrading)="onSubmit($event)"
             (skip)="onSkip()"
@@ -106,26 +113,26 @@ interface PendingGrade {
       </div>
 
       <div class="empty" *ngIf="!caseData() && !busy() && !done()">
-        <p class="dim">Waiting…</p>
+        <p class="dim">{{ "session.waiting" | transloco }}</p>
       </div>
 
       <div class="done" *ngIf="done()">
         <div class="panel">
-          <h2>Session complete</h2>
+          <h2>{{ "session.completeTitle" | transloco }}</h2>
           <p class="dim">
-            You have graded all {{ progress().total }} cases for this phase.
+            {{ "session.completeBody" | transloco: { total: progress().total } }}
           </p>
-          <p class="dim">Thank you — you may close the application.</p>
-          <button (click)="quit()">Exit</button>
+          <p class="dim">{{ "session.completeThanks" | transloco }}</p>
+          <button (click)="quit()">{{ "session.exitBtn" | transloco }}</button>
         </div>
       </div>
 
       <div class="error" *ngIf="error()">
         <div class="panel">
-          <h2>Error</h2>
+          <h2>{{ "session.errorTitle" | transloco }}</h2>
           <p>{{ error() }}</p>
-          <button (click)="retry()">Retry</button>
-          <button (click)="quit()">Exit</button>
+          <button (click)="retry()">{{ "session.retry" | transloco }}</button>
+          <button (click)="quit()">{{ "session.exitBtn" | transloco }}</button>
         </div>
       </div>
     </div>
@@ -227,12 +234,16 @@ export class SessionComponent implements OnInit, OnDestroy {
   selectedIcdr = signal<number | null>(null);
   selectedDme = signal<number | null>(null);
   private aiRevealAt: number | null = null;
+  // Comment written on the AI-reveal screen; carried into the final submission
+  // (whether the reader keeps or updates their grade).
+  private adjudicationNotes: string | null = null;
 
   constructor(
     private api: ApiService,
     public appState: AppStateService,
     private router: Router,
     private idle: IdleService,
+    private transloco: TranslocoService,
   ) {}
 
   async ngOnInit() {
@@ -294,6 +305,7 @@ export class SessionComponent implements OnInit, OnDestroy {
       this.selectedIcdr.set(null);
       this.selectedDme.set(null);
       this.aiRevealAt = null;
+      this.adjudicationNotes = null;
       this.idle.start("macula", this.idleThresholdMs);
     } catch (e) {
       this.error.set(this.errorOf(e));
@@ -324,6 +336,7 @@ export class SessionComponent implements OnInit, OnDestroy {
         ai_icdr_shown: cd.ai_icdr,
         ai_dme_shown: cd.ai_dme,
         ai_decision: "changed",
+        adjudication_notes: this.adjudicationNotes,
       };
       void this.api.logEvent({
         event_type: "ai_decision",
@@ -372,14 +385,16 @@ export class SessionComponent implements OnInit, OnDestroy {
       ai_icdr_shown: null,
       ai_dme_shown: null,
       ai_decision: decision,
+      adjudication_notes: null,
     };
     return this.finalSubmit(payload);
   }
 
-  onKeepGrade() {
+  onKeepGrade(comment: string | null) {
     const cd = this.caseData();
     const pre = this.pendingGrade();
     if (!cd || !pre) return;
+    this.adjudicationNotes = comment;
     const payload: SubmitPayload = {
       ...pre,
       pre_ai_icdr: pre.icdr,
@@ -387,6 +402,7 @@ export class SessionComponent implements OnInit, OnDestroy {
       ai_icdr_shown: cd.ai_icdr,
       ai_dme_shown: cd.ai_dme,
       ai_decision: "kept",
+      adjudication_notes: comment,
     };
     void this.api.logEvent({
       event_type: "ai_decision",
@@ -404,7 +420,9 @@ export class SessionComponent implements OnInit, OnDestroy {
     void this.finalSubmit(payload);
   }
 
-  onUpdateGrade() {
+  onUpdateGrade(comment: string | null) {
+    // Carry the adjudication comment into the final submit after editing.
+    this.adjudicationNotes = comment;
     this.setStage("editing_after_ai");
     void this.api.logEvent({
       event_type: "ai_update_chosen",
@@ -446,7 +464,7 @@ export class SessionComponent implements OnInit, OnDestroy {
   // ---------- misc handlers ----------
 
   async onSkip() {
-    if (!confirm("Skip this case? It will be re-queued at the end.")) return;
+    if (!confirm(this.transloco.translate("session.skipConfirm"))) return;
     try {
       await this.api.skipCase();
       this.idle.stop();

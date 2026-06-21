@@ -1,39 +1,22 @@
 import { Component, EventEmitter, Input, Output } from "@angular/core";
 import { CommonModule } from "@angular/common";
-
-const ICDR_LABELS = new Map<number, string>([
-  [0, "No DR"],
-  [1, "Mild NPDR"],
-  [2, "Moderate NPDR"],
-  [3, "Severe NPDR"],
-  [4, "PDR"],
-  [6, "Ungradable"],
-]);
-
-const DME_LABELS = new Map<number, string>([
-  [0, "No DME"],
-  [1, "Mild"],
-  [2, "Severe"],
-  [6, "Ungradable"],
-]);
+import { FormsModule } from "@angular/forms";
+import { TranslocoPipe } from "@jsverse/transloco";
 
 @Component({
   selector: "app-ai-reveal",
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, FormsModule, TranslocoPipe],
   template: `
     <div class="reveal-card">
       <div class="header">
-        <h3>AI prediction</h3>
-        <p class="faint">
-          You committed to a grade. The model's prediction is shown below. You
-          can keep your grade or revise it.
-        </p>
+        <h3>{{ "aiReveal.title" | transloco }}</h3>
+        <p class="faint">{{ "aiReveal.intro" | transloco }}</p>
       </div>
 
       <div class="grades">
         <div class="grade-col">
-          <span class="col-label">Your grade</span>
+          <span class="col-label">{{ "aiReveal.yourGrade" | transloco }}</span>
           <div
             class="grade-row"
             [class.match]="bothMatch()"
@@ -41,23 +24,29 @@ const DME_LABELS = new Map<number, string>([
           >
             <span class="grade-name">ICDR</span>
             <span class="grade-value">R{{ humanIcdr }}</span>
-            <span class="grade-desc faint">{{ icdrLabel(humanIcdr) }}</span>
+            <span class="grade-desc faint">{{
+              "grades.icdr." + humanIcdr + ".label" | transloco
+            }}</span>
           </div>
           <div
             class="grade-row"
             [class.match]="bothMatch()"
             [class.ungradable]="humanDme === 6"
           >
-            <span class="grade-name">DME</span>
+            <span class="grade-name">{{ "grading.dme" | transloco }}</span>
             <span class="grade-value">M{{ humanDme }}</span>
-            <span class="grade-desc faint">{{ dmeLabel(humanDme) }}</span>
+            <span class="grade-desc faint">{{
+              "grades.dme." + humanDme + ".label" | transloco
+            }}</span>
           </div>
         </div>
 
         <div class="divider"></div>
 
         <div class="grade-col ai">
-          <span class="col-label">AI prediction</span>
+          <span class="col-label">{{
+            "aiReveal.aiPrediction" | transloco
+          }}</span>
           <div
             class="grade-row"
             [class.mismatch]="!icdrMatch()"
@@ -66,7 +55,9 @@ const DME_LABELS = new Map<number, string>([
           >
             <span class="grade-name">ICDR</span>
             <span class="grade-value">R{{ aiIcdr }}</span>
-            <span class="grade-desc faint">{{ icdrLabel(aiIcdr) }}</span>
+            <span class="grade-desc faint">{{
+              "grades.icdr." + aiIcdr + ".label" | transloco
+            }}</span>
           </div>
           <div
             class="grade-row"
@@ -74,35 +65,55 @@ const DME_LABELS = new Map<number, string>([
             [class.match]="dmeMatch()"
             [class.ungradable]="aiDme === 6"
           >
-            <span class="grade-name">DME</span>
+            <span class="grade-name">{{ "grading.dme" | transloco }}</span>
             <span class="grade-value">M{{ aiDme }}</span>
-            <span class="grade-desc faint">{{ dmeLabel(aiDme) }}</span>
+            <span class="grade-desc faint">{{
+              "grades.dme." + aiDme + ".label" | transloco
+            }}</span>
           </div>
         </div>
       </div>
 
       <div class="status" *ngIf="bothMatch()">
-        <span class="status-pill agree">AI agrees with your grading</span>
+        <span class="status-pill agree">{{
+          "aiReveal.agrees" | transloco
+        }}</span>
       </div>
       <div class="status" *ngIf="!bothMatch()">
         <span class="status-pill disagree">
-          AI disagrees on
+          {{ "aiReveal.disagreesOn" | transloco }}
           <ng-container *ngIf="!icdrMatch() && !dmeMatch()"
-            >ICDR &amp; DME</ng-container
+            >ICDR &amp; {{ "grading.dme" | transloco }}</ng-container
           >
           <ng-container *ngIf="!icdrMatch() && dmeMatch()">ICDR</ng-container>
-          <ng-container *ngIf="icdrMatch() && !dmeMatch()">DME</ng-container>
+          <ng-container *ngIf="icdrMatch() && !dmeMatch()">{{
+            "grading.dme" | transloco
+          }}</ng-container>
         </span>
       </div>
 
-      <div class="actions">
-        <button class="primary" (click)="keep.emit()">Keep my grade</button>
-        <button (click)="update.emit()">Update my grade</button>
+      <div class="comment">
+        <label>
+          {{ "aiReveal.comment" | transloco }}
+          <span class="faint">{{ "aiReveal.commentHint" | transloco }}</span>
+        </label>
+        <textarea
+          [(ngModel)]="comment"
+          name="adjudicationComment"
+          rows="2"
+          [placeholder]="'aiReveal.commentPh' | transloco"
+        ></textarea>
       </div>
-      <p class="faint actions-help">
-        "Keep" submits your grade unchanged. "Update" reopens the form so you
-        can revise. Either way is recorded.
-      </p>
+
+      <div class="actions">
+        <button class="primary" (click)="keep.emit(commentOrNull())">
+          {{ "aiReveal.keep" | transloco }}
+        </button>
+        <button (click)="update.emit(commentOrNull())">
+          {{ "aiReveal.update" | transloco }}
+        </button>
+      </div>
+      <p class="faint actions-help">{{ "aiReveal.help" | transloco }}</p>
     </div>
   `,
   styles: [
@@ -231,6 +242,22 @@ const DME_LABELS = new Map<number, string>([
         font-size: 11px;
         margin: 0;
       }
+      .comment {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .comment label {
+        font-size: 12px;
+        color: var(--text-dim);
+        font-weight: 500;
+      }
+      .comment textarea {
+        width: 100%;
+        box-sizing: border-box;
+        resize: vertical;
+        font-family: inherit;
+      }
     `,
   ],
 })
@@ -240,8 +267,16 @@ export class AiRevealComponent {
   @Input({ required: true }) aiIcdr!: number;
   @Input({ required: true }) aiDme!: number;
 
-  @Output() keep = new EventEmitter<void>();
-  @Output() update = new EventEmitter<void>();
+  /** Emit the adjudication comment (or null when blank) alongside the decision. */
+  @Output() keep = new EventEmitter<string | null>();
+  @Output() update = new EventEmitter<string | null>();
+
+  comment = "";
+
+  commentOrNull(): string | null {
+    const t = this.comment.trim();
+    return t ? t : null;
+  }
 
   icdrMatch(): boolean {
     return this.humanIcdr === this.aiIcdr;
@@ -251,12 +286,5 @@ export class AiRevealComponent {
   }
   bothMatch(): boolean {
     return this.icdrMatch() && this.dmeMatch();
-  }
-
-  icdrLabel(v: number): string {
-    return ICDR_LABELS.get(v) ?? "?";
-  }
-  dmeLabel(v: number): string {
-    return DME_LABELS.get(v) ?? "?";
   }
 }

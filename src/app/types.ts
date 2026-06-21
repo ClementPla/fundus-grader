@@ -106,6 +106,9 @@ export interface SubmitPayload {
   ai_icdr_shown: number | null;
   ai_dme_shown: number | null;
   ai_decision: AiDecision | null;
+  /** Comment written during the AI-reveal (adjudication) phase. Stored
+   *  separately from `notes` so it never overwrites the original grading notes. */
+  adjudication_notes: string | null;
 }
 
 /** One mouse sample as sent to the backend. Coordinates are in image-space

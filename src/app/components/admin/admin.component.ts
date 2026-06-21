@@ -2,28 +2,33 @@ import { Component, OnInit, signal } from "@angular/core";
 import { CommonModule } from "@angular/common";
 import { FormsModule } from "@angular/forms";
 import { Router } from "@angular/router";
+import { TranslocoPipe, TranslocoService } from "@jsverse/transloco";
 import { ApiService } from "../../services/api.service";
 import { AppStateService } from "../../services/app-state.service";
+import { LangToggleComponent } from "../lang-toggle/lang-toggle.component";
 import { AdminStatus, SubmissionRow } from "../../types";
 
 @Component({
   selector: "app-admin",
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, TranslocoPipe, LangToggleComponent],
   template: `
     <div class="root">
       <div class="bar">
-        <button (click)="back()">← Back</button>
-        <h2>Administrator</h2>
+        <button (click)="back()">{{ "admin.back" | transloco }}</button>
+        <h2>{{ "admin.title" | transloco }}</h2>
         <span class="spacer"></span>
-        <button *ngIf="status()?.authed" (click)="logout()">Sign out</button>
+        <app-lang-toggle></app-lang-toggle>
+        <button *ngIf="status()?.authed" (click)="logout()">
+          {{ "admin.signOut" | transloco }}
+        </button>
       </div>
 
       <div class="content">
         <!-- Project required -->
         <div class="panel" *ngIf="!appState.project()">
-          <p class="dim">No project file is open.</p>
-          <button (click)="back()">Go back</button>
+          <p class="dim">{{ "admin.noProject" | transloco }}</p>
+          <button (click)="back()">{{ "admin.goBack" | transloco }}</button>
         </div>
 
         <!-- First-time setup -->
@@ -36,26 +41,24 @@ import { AdminStatus, SubmissionRow } from "../../types";
             !status()!.authed
           "
         >
-          <h3>Set administrator password</h3>
-          <p class="dim">
-            No password is set for this project yet. Choose one now.
-          </p>
+          <h3>{{ "admin.setPwTitle" | transloco }}</h3>
+          <p class="dim">{{ "admin.setPwHelp" | transloco }}</p>
           <input
             type="password"
             [(ngModel)]="newPassword"
-            placeholder="New password (min 6 chars)"
+            [placeholder]="'admin.newPwMinPh' | transloco"
           />
           <input
             type="password"
             [(ngModel)]="newPassword2"
-            placeholder="Confirm"
+            [placeholder]="'admin.confirmPh' | transloco"
           />
           <button
             class="primary"
             (click)="setPassword()"
             [disabled]="busy() || !canSetPassword()"
           >
-            Set password
+            {{ "admin.setPw" | transloco }}
           </button>
           <p class="faint" *ngIf="error()">{{ error() }}</p>
         </div>
@@ -70,11 +73,11 @@ import { AdminStatus, SubmissionRow } from "../../types";
             !status()!.authed
           "
         >
-          <h3>Administrator login</h3>
+          <h3>{{ "admin.loginTitle" | transloco }}</h3>
           <input
             type="password"
             [(ngModel)]="password"
-            placeholder="Password"
+            [placeholder]="'admin.passwordPh' | transloco"
             (keyup.enter)="login()"
           />
           <button
@@ -82,7 +85,7 @@ import { AdminStatus, SubmissionRow } from "../../types";
             (click)="login()"
             [disabled]="busy() || !password"
           >
-            Sign in
+            {{ "admin.signIn" | transloco }}
           </button>
           <p class="faint" *ngIf="error()">{{ error() }}</p>
         </div>
@@ -90,11 +93,12 @@ import { AdminStatus, SubmissionRow } from "../../types";
         <!-- Authenticated panes -->
         <ng-container *ngIf="status() && status()!.authed">
           <div class="panel">
-            <h3>Study phase</h3>
+            <h3>{{ "admin.phaseTitle" | transloco }}</h3>
             <p class="dim">
-              Current phase:
+              {{ "admin.currentPhase" | transloco }}
               <strong>{{
-                status()!.phase === "ai" ? "AI assisted" : "No AI"
+                (status()!.phase === "ai" ? "admin.aiAssisted" : "admin.noAi")
+                  | transloco
               }}</strong>
             </p>
             <div class="row">
@@ -102,35 +106,30 @@ import { AdminStatus, SubmissionRow } from "../../types";
                 [disabled]="status()!.phase === 'no_ai'"
                 (click)="setPhase('no_ai')"
               >
-                No AI
+                {{ "admin.noAi" | transloco }}
               </button>
               <button
                 [disabled]="status()!.phase === 'ai'"
                 (click)="setPhase('ai')"
               >
-                AI assisted
+                {{ "admin.aiAssisted" | transloco }}
               </button>
             </div>
-            <p class="faint">
-              Changing the phase affects all new sessions immediately. Readers
-              in an active session must restart to see the change.
-            </p>
+            <p class="faint">{{ "admin.phaseHelp" | transloco }}</p>
           </div>
 
           <div class="panel">
-            <h3>Submissions</h3>
-            <p class="dim faint">
-              Most recent 500. Use revert to allow a reader to re-grade a case.
-            </p>
+            <h3>{{ "admin.submissionsTitle" | transloco }}</h3>
+            <p class="dim faint">{{ "admin.submissionsHelp" | transloco }}</p>
             <table>
               <thead>
                 <tr>
-                  <th>When</th>
-                  <th>Reader</th>
-                  <th>Phase</th>
-                  <th>Case</th>
-                  <th>ICDR</th>
-                  <th>DME</th>
+                  <th>{{ "admin.thWhen" | transloco }}</th>
+                  <th>{{ "admin.thReader" | transloco }}</th>
+                  <th>{{ "admin.thPhase" | transloco }}</th>
+                  <th>{{ "admin.thCase" | transloco }}</th>
+                  <th>{{ "admin.thIcdr" | transloco }}</th>
+                  <th>{{ "admin.thDme" | transloco }}</th>
                   <th></th>
                 </tr>
               </thead>
@@ -155,48 +154,51 @@ import { AdminStatus, SubmissionRow } from "../../types";
                       class="danger"
                       (click)="revert(s)"
                     >
-                      Revert
+                      {{ "admin.revert" | transloco }}
                     </button>
-                    <span *ngIf="s.reverted" class="faint">reverted</span>
+                    <span *ngIf="s.reverted" class="faint">{{
+                      "admin.reverted" | transloco
+                    }}</span>
                   </td>
                 </tr>
                 <tr *ngIf="submissions().length === 0">
-                  <td colspan="7" class="faint">No submissions yet.</td>
+                  <td colspan="7" class="faint">
+                    {{ "admin.noSubmissions" | transloco }}
+                  </td>
                 </tr>
               </tbody>
             </table>
           </div>
 
           <div class="panel">
-            <h3>Export</h3>
-            <p class="dim faint">
-              Copy the current results SQLite file to a chosen location.
-            </p>
+            <h3>{{ "admin.exportTitle" | transloco }}</h3>
+            <p class="dim faint">{{ "admin.exportHelp" | transloco }}</p>
             <button (click)="exportResults()" [disabled]="busy()">
-              Export results…
+              {{ "admin.exportBtn" | transloco }}
             </button>
             <p class="faint" *ngIf="lastExport()">
-              Exported to: <span class="mono">{{ lastExport() }}</span>
+              {{ "admin.exportedTo" | transloco }}
+              <span class="mono">{{ lastExport() }}</span>
             </p>
           </div>
 
           <div class="panel">
-            <h3>Change password</h3>
+            <h3>{{ "admin.changePwTitle" | transloco }}</h3>
             <input
               type="password"
               [(ngModel)]="newPassword"
-              placeholder="New password"
+              [placeholder]="'admin.newPwPh' | transloco"
             />
             <input
               type="password"
               [(ngModel)]="newPassword2"
-              placeholder="Confirm"
+              [placeholder]="'admin.confirmPh' | transloco"
             />
             <button
               (click)="setPassword()"
               [disabled]="busy() || !canSetPassword()"
             >
-              Update password
+              {{ "admin.updatePw" | transloco }}
             </button>
           </div>
         </ng-container>
@@ -295,6 +297,7 @@ export class AdminComponent implements OnInit {
     private api: ApiService,
     public appState: AppStateService,
     private router: Router,
+    private transloco: TranslocoService,
   ) {}
 
   async ngOnInit() {
@@ -353,7 +356,7 @@ export class AdminComponent implements OnInit {
       this.status.set(await this.api.adminStatus());
       await this.refreshSubmissions();
     } catch (e) {
-      this.error.set("Incorrect password");
+      this.error.set(this.transloco.translate("admin.incorrectPw"));
     } finally {
       this.busy.set(false);
     }
@@ -386,7 +389,10 @@ export class AdminComponent implements OnInit {
 
   async revert(s: SubmissionRow) {
     const reason = prompt(
-      `Revert submission of case ${s.case_id} by ${s.reader_surname}? Provide a reason:`,
+      this.transloco.translate("admin.revertPrompt", {
+        caseId: s.case_id,
+        surname: s.reader_surname,
+      }),
       "",
     );
     if (!reason) return;

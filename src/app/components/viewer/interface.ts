@@ -25,7 +25,6 @@ export interface ViewState {
   loaded: boolean;
   width: number;
   height: number;
-  preprocessed: boolean;
   overlays: OverlayState[];
   etdrs: EtdrsRings | null;
   scale: number;

@@ -2,24 +2,30 @@ import { Component, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
+import { TranslocoPipe } from '@jsverse/transloco';
 import { ApiService } from '../../services/api.service';
 import { AppStateService } from '../../services/app-state.service';
+import { LangToggleComponent } from '../lang-toggle/lang-toggle.component';
 import { Reader } from '../../types';
 
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, TranslocoPipe, LangToggleComponent],
   template: `
     <div class="wrap">
       <div class="panel card">
-        <h1>Fundus Grader</h1>
+        <div class="title-row">
+          <h1>{{ 'common.appName' | transloco }}</h1>
+          <span class="spacer"></span>
+          <app-lang-toggle></app-lang-toggle>
+        </div>
 
         <!-- Step 1: project file -->
         <div class="col" *ngIf="!appState.project()">
-          <p class="dim">Open a study project file to begin.</p>
+          <p class="dim">{{ 'login.openPrompt' | transloco }}</p>
           <button class="primary" (click)="pickProject()" [disabled]="busy()">
-            {{ busy() ? 'Opening…' : 'Open project file' }}
+            {{ (busy() ? 'login.opening' : 'login.openProject') | transloco }}
           </button>
           <p class="faint" *ngIf="error()">{{ error() }}</p>
         </div>
@@ -27,15 +33,15 @@ import { Reader } from '../../types';
         <!-- Step 2: reader identification -->
         <div class="col" *ngIf="appState.project() && !appState.reader()">
           <p class="dim">
-            Project loaded: <span class="mono">{{ appState.project()!.project_path }}</span>
+            {{ 'login.projectLoaded' | transloco }} <span class="mono">{{ appState.project()!.project_path }}</span>
           </p>
           <p class="dim">
-            Results will be saved to:
+            {{ 'login.resultsSaved' | transloco }}
             <span class="mono">{{ appState.project()!.results_path }}</span>
           </p>
 
           <div *ngIf="readers().length > 0" class="col">
-            <label>Continue as existing reader</label>
+            <label>{{ 'login.continueExisting' | transloco }}</label>
             <div class="readers-list">
               <button
                 *ngFor="let r of readers()"
@@ -45,22 +51,22 @@ import { Reader } from '../../types';
                 {{ r.surname }}, {{ r.name }}
               </button>
             </div>
-            <div class="separator"><span>or register new</span></div>
+            <div class="separator"><span>{{ 'login.orRegister' | transloco }}</span></div>
           </div>
 
-          <label>Surname</label>
-          <input [(ngModel)]="surname" (keyup.enter)="registerNew()" placeholder="Family name" />
-          <label>Given name</label>
-          <input [(ngModel)]="name" (keyup.enter)="registerNew()" placeholder="First name" />
+          <label>{{ 'login.surname' | transloco }}</label>
+          <input [(ngModel)]="surname" (keyup.enter)="registerNew()" [placeholder]="'login.surnamePh' | transloco" />
+          <label>{{ 'login.givenName' | transloco }}</label>
+          <input [(ngModel)]="name" (keyup.enter)="registerNew()" [placeholder]="'login.givenNamePh' | transloco" />
           <button class="primary" (click)="registerNew()" [disabled]="busy() || !canRegister()">
-            Continue
+            {{ 'login.continue' | transloco }}
           </button>
           <p class="faint" *ngIf="error()">{{ error() }}</p>
 
           <div class="footer-row">
-            <button (click)="reopenProject()">Change project</button>
+            <button (click)="reopenProject()">{{ 'login.changeProject' | transloco }}</button>
             <span class="spacer"></span>
-            <button (click)="goAdmin()">Administrator</button>
+            <button (click)="goAdmin()">{{ 'login.administrator' | transloco }}</button>
           </div>
         </div>
       </div>
@@ -83,6 +89,7 @@ import { Reader } from '../../types';
       flex-direction: column;
       gap: 14px;
     }
+    .title-row { display: flex; align-items: center; gap: 8px; }
     h1 { margin: 0 0 8px 0; font-size: 22px; font-weight: 500; }
     label { font-size: 12px; color: var(--text-dim); }
     .readers-list { display: flex; flex-wrap: wrap; gap: 8px; }

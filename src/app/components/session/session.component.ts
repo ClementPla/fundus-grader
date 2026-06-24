@@ -306,7 +306,10 @@ export class SessionComponent implements OnInit, OnDestroy {
       this.selectedDme.set(null);
       this.aiRevealAt = null;
       this.adjudicationNotes = null;
-      this.idle.start("macula", this.idleThresholdMs);
+      // Match the viewer's initial view (optic disc when present, else macula)
+      // so idle events are attributed to the right view.
+      const firstView = data.views.some((v) => v.view === "od") ? "od" : "macula";
+      this.idle.start(firstView, this.idleThresholdMs);
     } catch (e) {
       this.error.set(this.errorOf(e));
     } finally {

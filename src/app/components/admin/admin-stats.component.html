@@ -1,0 +1,511 @@
+<div class="stats-root">
+  <!-- ---------- Controls ---------- -->
+  <div class="controls">
+    <label class="ctrl">
+      <span>Reader</span>
+      <select
+        [ngModel]="selectedReaderId()"
+        (ngModelChange)="onReaderChange($event)"
+      >
+        <option [ngValue]="null">— select —</option>
+        <option *ngFor="let r of readers()" [ngValue]="r.id">
+          {{ r.surname }}, {{ r.name }} (#{{ r.id }})
+        </option>
+      </select>
+    </label>
+
+    <label class="ctrl">
+      <span>Phase</span>
+      <div class="seg">
+        <button
+          *ngFor="let p of ['all', 'no_ai', 'ai']"
+          [class.on]="phaseFilter() === p"
+          (click)="phaseFilter.set($any(p))"
+        >
+          {{ p === "all" ? "All" : p === "ai" ? "AI" : "No AI" }}
+        </button>
+      </div>
+    </label>
+
+    <label class="ctrl">
+      <span>Compare to</span>
+      <div class="seg">
+        <button
+          [class.on]="compareTarget() === 'reference'"
+          (click)="compareTarget.set('reference')"
+        >
+          Reference
+        </button>
+        <button
+          [class.on]="compareTarget() === 'ai'"
+          (click)="compareTarget.set('ai')"
+        >
+          AI
+        </button>
+      </div>
+    </label>
+
+    <label class="ctrl checkbox">
+      <input
+        type="checkbox"
+        [ngModel]="includeCalibration()"
+        (ngModelChange)="includeCalibration.set($event)"
+      />
+      <span>Include calibration cases</span>
+    </label>
+
+    <label class="ctrl checkbox">
+      <input
+        type="checkbox"
+        [ngModel]="binarize()"
+        (ngModelChange)="binarize.set($event)"
+      />
+      <span>Binary problem</span>
+    </label>
+
+    <span class="spacer"></span>
+    <button
+      class="ghost"
+      (click)="exportCsv()"
+      [disabled]="!cases().length"
+      title="Download all case rows as CSV"
+    >
+      Export CSV
+    </button>
+  </div>
+
+  <p class="hint" *ngIf="!selectedReaderId()">
+    Select a reader to see their statistics.
+  </p>
+  <p class="hint" *ngIf="loading()">Loading…</p>
+  <p class="hint err" *ngIf="error()">{{ error() }}</p>
+
+  <ng-container *ngIf="raw() as r">
+    <!-- ---------- Reader header ---------- -->
+    <div class="reader-head">
+      <div>
+        <h2>{{ r.reader.surname }}, {{ r.reader.name }}</h2>
+        <p class="dim">
+          Reader #{{ r.reader.id }} · first seen
+          {{ r.reader.first_seen_at | slice: 0 : 10 }} · last seen
+          {{ r.reader.last_seen_at | slice: 0 : 10 }}
+        </p>
+      </div>
+      <div class="scope-note dim">
+        Showing {{ submitted().length }} graded /
+        {{ cases().length }} assigned
+        <span *ngIf="phaseFilter() !== 'all'"> · {{ phaseFilter() }}</span>
+        <span *ngIf="!includeCalibration()"> · calibration excluded</span>
+      </div>
+    </div>
+
+    <!-- ---------- KPI cards ---------- -->
+    <div class="kpis">
+      <div class="kpi">
+        <div class="kpi-val">{{ graded() }}</div>
+        <div class="kpi-lbl">Cases graded</div>
+        <div class="kpi-sub">{{ pendingCount() }} still pending</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-val">{{ fmtDuration(medianTotalMs()) }}</div>
+        <div class="kpi-lbl">Median time / case</div>
+        <div class="kpi-sub">mean {{ fmtDuration(meanTotalMs()) }}</div>
+      </div>
+      <div class="kpi" *ngIf="aiCases().length">
+        <div class="kpi-val">
+          {{ pct(icdrDisagree() + dmeDisagree(), aiCases().length * 2) }}
+        </div>
+        <div class="kpi-lbl">Disagreement with AI</div>
+        <div class="kpi-sub">
+          ICDR {{ pct(icdrDisagree(), aiCases().length) }} · DME
+          {{ pct(dmeDisagree(), aiCases().length) }}
+        </div>
+      </div>
+      <div class="kpi" *ngIf="aiCases().length">
+        <div class="kpi-val">
+          {{ pct(aiDecisionCounts().changed, aiDecisionCounts().total) }}
+        </div>
+        <div class="kpi-lbl">Changed after reveal</div>
+        <div class="kpi-sub">
+          {{ aiDecisionCounts().changed }} of {{ aiDecisionCounts().total }} AI
+          cases
+        </div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-val">{{ totalCorrections() }}</div>
+        <div class="kpi-lbl">Macula corrections</div>
+        <div class="kpi-sub">
+          on {{ casesWithCorrection() }} cases ·
+          {{ meanCorrectionDist() != null ? (meanCorrectionDist()! | number: "1.0-0") + " px avg" : "—" }}
+        </div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-val">{{ pct(icdrAgreement().exact, icdrAgreement().n) }}</div>
+        <div class="kpi-lbl">ICDR exact vs {{ compareTarget() }}</div>
+        <div class="kpi-sub">
+          within 1: {{ pct(icdrAgreement().within1, icdrAgreement().n) }}
+        </div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-val">{{ ungradableCount() }}</div>
+        <div class="kpi-lbl">Ungradable</div>
+        <div class="kpi-sub">R6 or M6 submissions</div>
+      </div>
+      <div class="kpi" *ngIf="r.revert_count">
+        <div class="kpi-val warn">{{ r.revert_count }}</div>
+        <div class="kpi-lbl">Reverted</div>
+        <div class="kpi-sub">grades sent back for redo</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <!-- ---------- AI behaviour ---------- -->
+      <section class="panel" *ngIf="aiCases().length; else noAi">
+        <h3>AI interaction</h3>
+        <div class="stacked">
+          <div
+            *ngFor="let b of aiDecisionBar()"
+            class="stacked-seg"
+            [style.width.%]="b.pct"
+            [style.background]="b.color"
+            [title]="b.label + ': ' + b.value"
+          ></div>
+        </div>
+        <div class="legend">
+          <span *ngFor="let b of aiDecisionBar()">
+            <i [style.background]="b.color"></i>{{ b.label }} ({{ b.value }})
+          </span>
+        </div>
+
+        <table class="mini">
+          <tr>
+            <td>Disagreed with AI (ICDR)</td>
+            <td>
+              <b>{{ icdrDisagree() }}</b>
+              <span class="dim"> / {{ aiCases().length }} ·
+                {{ pct(icdrDisagree(), aiCases().length) }}</span>
+            </td>
+          </tr>
+          <tr>
+            <td>Disagreed with AI (DME)</td>
+            <td>
+              <b>{{ dmeDisagree() }}</b>
+              <span class="dim"> / {{ aiCases().length }} ·
+                {{ pct(dmeDisagree(), aiCases().length) }}</span>
+            </td>
+          </tr>
+          <tr>
+            <td>Cases changed after reveal</td>
+            <td><b>{{ changedAfterReveal() }}</b></td>
+          </tr>
+          <tr>
+            <td>Grades moved toward AI</td>
+            <td><b class="good">{{ movedTowardAI() }}</b></td>
+          </tr>
+          <tr>
+            <td>Grades moved away from AI</td>
+            <td><b class="bad">{{ movedAwayFromAI() }}</b></td>
+          </tr>
+        </table>
+
+        <ng-container *ngIf="aiAccuracyShift() as sh">
+          <h4>AI effect on accuracy (vs reference)</h4>
+          <table class="mini">
+            <tr>
+              <td>ICDR exact — before → after AI</td>
+              <td>
+                {{ pct(sh.preIcdr, sh.n) }} →
+                <b [class.good]="sh.postIcdr >= sh.preIcdr" [class.bad]="sh.postIcdr < sh.preIcdr">{{ pct(sh.postIcdr, sh.n) }}</b>
+              </td>
+            </tr>
+            <tr>
+              <td>DME exact — before → after AI</td>
+              <td>
+                {{ pct(sh.preDme, sh.n) }} →
+                <b [class.good]="sh.postDme >= sh.preDme" [class.bad]="sh.postDme < sh.preDme">{{ pct(sh.postDme, sh.n) }}</b>
+              </td>
+            </tr>
+          </table>
+        </ng-container>
+      </section>
+      <ng-template #noAi>
+        <section class="panel">
+          <h3>AI interaction</h3>
+          <p class="dim">No AI-phase cases in the current selection.</p>
+        </section>
+      </ng-template>
+
+      <!-- ---------- Timing ---------- -->
+      <section class="panel">
+        <h3>Time on task</h3>
+        <table class="mini">
+          <tr>
+            <td>Median / mean per case</td>
+            <td><b>{{ fmtDuration(medianTotalMs()) }}</b> · {{ fmtDuration(meanTotalMs()) }}</td>
+          </tr>
+          <tr>
+            <td>Interquartile (p25–p75)</td>
+            <td>{{ fmtDuration(timing().p25) }} – {{ fmtDuration(timing().p75) }}</td>
+          </tr>
+          <tr>
+            <td>Mean time to first look (macula)</td>
+            <td>{{ fmtDuration(timing().meanFirstMacula) }}</td>
+          </tr>
+        </table>
+
+        <h4>Where the time went</h4>
+        <div class="split-label">
+          <span>Macula {{ maculaOdSplit().macula | number: "1.0-0" }}%</span>
+          <span>Optic disc {{ maculaOdSplit().od | number: "1.0-0" }}%</span>
+        </div>
+        <div class="stacked">
+          <div class="stacked-seg" [style.width.%]="maculaOdSplit().macula" style="background: var(--accent)"></div>
+          <div class="stacked-seg" [style.width.%]="maculaOdSplit().od" style="background: #9b6bd6"></div>
+        </div>
+
+        <ng-container *ngIf="timing().preAi + timing().postAi > 0">
+          <h4>Before vs after AI reveal</h4>
+          <table class="mini">
+            <tr>
+              <td>Pre-reveal active time</td>
+              <td>{{ fmtDuration(timing().preAi) }}</td>
+            </tr>
+            <tr>
+              <td>Adjudication active time</td>
+              <td>{{ fmtDuration(timing().postAi) }}</td>
+            </tr>
+          </table>
+        </ng-container>
+      </section>
+    </div>
+
+    <!-- ---------- Confusion matrices ---------- -->
+    <div class="grid-2">
+      <section class="panel">
+        <h3>
+          ICDR vs {{ compareTarget() }}
+          <span class="thr-sel" *ngIf="binarize()">
+            · positive ≥
+            <select
+              [ngModel]="icdrThreshold()"
+              (ngModelChange)="icdrThreshold.set($event)"
+            >
+              <option *ngFor="let t of icdrThresholds" [ngValue]="t">R{{ t }}</option>
+            </select>
+          </span>
+        </h3>
+        <ng-container *ngTemplateOutlet="matrix; context: { $implicit: icdrConfusion() }"></ng-container>
+        <ng-container *ngTemplateOutlet="metricsBlock; context: { $implicit: icdrMetrics() }"></ng-container>
+      </section>
+      <section class="panel">
+        <h3>
+          DME vs {{ compareTarget() }}
+          <span class="thr-sel" *ngIf="binarize()">
+            · positive ≥
+            <select
+              [ngModel]="dmeThreshold()"
+              (ngModelChange)="dmeThreshold.set($event)"
+            >
+              <option *ngFor="let t of dmeThresholds" [ngValue]="t">M{{ t }}</option>
+            </select>
+          </span>
+        </h3>
+        <ng-container *ngTemplateOutlet="matrix; context: { $implicit: dmeConfusion() }"></ng-container>
+        <ng-container *ngTemplateOutlet="metricsBlock; context: { $implicit: dmeMetrics() }"></ng-container>
+      </section>
+    </div>
+
+    <ng-template #metricsBlock let-mm>
+      <div class="metrics">
+        <ng-container *ngIf="!mm.binary; else binMetrics">
+          <div class="metric">
+            <span class="m-val">{{ fmtKappa(mm.kappa) }}</span>
+            <span class="m-lbl">Cohen's κ</span>
+          </div>
+          <div class="metric">
+            <span class="m-val">{{ fmtKappa(mm.kappaQuad) }}</span>
+            <span class="m-lbl">κ quadratic</span>
+          </div>
+          <div class="metric">
+            <span class="m-val">{{ fmtRate(mm.accuracy) }}</span>
+            <span class="m-lbl">Accuracy</span>
+          </div>
+        </ng-container>
+        <ng-template #binMetrics>
+          <div class="metric">
+            <span class="m-val">{{ fmtKappa(mm.binary.kappa) }}</span>
+            <span class="m-lbl">Cohen's κ</span>
+          </div>
+          <div class="metric">
+            <span class="m-val">{{ fmtRate(mm.binary.sensitivity) }}</span>
+            <span class="m-lbl">Sensitivity</span>
+          </div>
+          <div class="metric">
+            <span class="m-val">{{ fmtRate(mm.binary.specificity) }}</span>
+            <span class="m-lbl">Specificity</span>
+          </div>
+          <div class="metric">
+            <span class="m-val">{{ fmtRate(mm.binary.precision) }}</span>
+            <span class="m-lbl">Precision</span>
+          </div>
+          <div class="metric">
+            <span class="m-val">{{ fmtRate(mm.binary.f1) }}</span>
+            <span class="m-lbl">F1</span>
+          </div>
+          <div class="metric">
+            <span class="m-val">{{ fmtRate(mm.binary.accuracy) }}</span>
+            <span class="m-lbl">Accuracy</span>
+          </div>
+        </ng-template>
+      </div>
+      <p class="dim small">
+        n = {{ mm.n }}<span *ngIf="mm.excluded">
+          · {{ mm.excluded }} ungradable excluded</span
+        ><span *ngIf="mm.binary"> · TP {{ mm.binary.tp }} · FP {{ mm.binary.fp }} · FN {{ mm.binary.fn }} · TN {{ mm.binary.tn }}</span>
+      </p>
+    </ng-template>
+
+    <ng-template #matrix let-m>
+      <div class="confusion" *ngIf="m.total; else noMatrix">
+        <table>
+          <thead>
+            <tr>
+              <th class="corner">reader ＼ {{ compareTarget() === "ai" ? "AI" : "ref" }}</th>
+              <th *ngFor="let c of m.cols">{{ m.labelOf(c) }}</th>
+              <th class="tot">Σ</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let rv of m.rows; let ri = index">
+              <th>{{ m.labelOf(rv) }}</th>
+              <td
+                *ngFor="let cv of m.cols; let ci = index"
+                [class.diag]="ri === ci"
+                [style.background]="cellColor(m.grid[ri][ci], m.max)"
+              >
+                {{ m.grid[ri][ci] || "" }}
+              </td>
+              <td class="tot">{{ m.rowTotals[ri] }}</td>
+            </tr>
+            <tr class="tot-row">
+              <th>Σ</th>
+              <td *ngFor="let cv of m.cols; let ci = index">{{ m.colTotals[ci] }}</td>
+              <td class="tot">{{ m.total }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="dim small">Rows = this reader · columns = {{ compareTarget() }}. Diagonal = agreement.</p>
+      </div>
+      <ng-template #noMatrix>
+        <p class="dim">No overlapping data for this comparison.</p>
+      </ng-template>
+    </ng-template>
+
+    <!-- ---------- Distributions ---------- -->
+    <div class="grid-2">
+      <section class="panel">
+        <h3>Grade distribution</h3>
+        <h4>ICDR</h4>
+        <div class="bars">
+          <div class="bar-row" *ngFor="let b of icdrDist()">
+            <span class="bar-lbl">{{ b.label }}</span>
+            <span class="bar-track"><span class="bar-fill" [style.width.%]="b.pct" [style.background]="b.color"></span></span>
+            <span class="bar-val">{{ b.value }}</span>
+          </div>
+        </div>
+        <h4>DME</h4>
+        <div class="bars">
+          <div class="bar-row" *ngFor="let b of dmeDist()">
+            <span class="bar-lbl">{{ b.label }}</span>
+            <span class="bar-track"><span class="bar-fill" [style.width.%]="b.pct" [style.background]="b.color"></span></span>
+            <span class="bar-val">{{ b.value }}</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h3>Self-assessment</h3>
+        <h4>Confidence (1 = guessing, 5 = certain)</h4>
+        <div class="bars">
+          <div class="bar-row" *ngFor="let b of confidenceDist()">
+            <span class="bar-lbl">{{ b.label }}</span>
+            <span class="bar-track"><span class="bar-fill" [style.width.%]="b.pct" [style.background]="b.color"></span></span>
+            <span class="bar-val">{{ b.value }}</span>
+          </div>
+        </div>
+        <h4>Difficulty</h4>
+        <div class="bars">
+          <div class="bar-row" *ngFor="let b of difficultyDist()">
+            <span class="bar-lbl">{{ b.label }}</span>
+            <span class="bar-track"><span class="bar-fill" [style.width.%]="b.pct" [style.background]="b.color"></span></span>
+            <span class="bar-val">{{ b.value }}</span>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ---------- Tool usage ---------- -->
+    <section class="panel">
+      <h3>Tool usage</h3>
+      <div class="tool-grid">
+        <div class="tool" *ngFor="let t of tools()">
+          <div class="tool-val">{{ t.total }}</div>
+          <div class="tool-lbl">{{ t.label }}</div>
+          <div class="tool-sub">{{ t.per | number: "1.1-1" }} / case</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- Per-case table ---------- -->
+    <section class="panel">
+      <h3>Per-case detail</h3>
+      <div class="table-wrap">
+        <table class="cases">
+          <thead>
+            <tr>
+              <th (click)="setSort('case_id')">Case</th>
+              <th (click)="setSort('phase')">Phase</th>
+              <th (click)="setSort('total_ms')">Time</th>
+              <th (click)="setSort('icdr')">ICDR</th>
+              <th>ref</th>
+              <th>AI</th>
+              <th (click)="setSort('dme')">DME</th>
+              <th>ref</th>
+              <th>AI</th>
+              <th (click)="setSort('ai_decision')">Decision</th>
+              <th (click)="setSort('confidence')">Conf</th>
+              <th (click)="setSort('difficulty')">Diff</th>
+              <th (click)="setSort('n_macula_corrections')">Corr</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let c of sortedCases()" [class.unsubmitted]="!c.submitted_at">
+              <td class="mono">
+                {{ c.case_id }}
+                <span class="cal" *ngIf="c.is_calibration" title="Calibration">cal</span>
+              </td>
+              <td>{{ c.phase === "ai" ? "AI" : "No AI" }}</td>
+              <td class="mono">{{ c.submitted_at ? fmtDuration(totalMs(c)) : "—" }}</td>
+              <td class="mono" [class]="agreeClass(c.icdr, c.ref_icdr)">{{ icdrLabel(c.icdr) }}</td>
+              <td class="mono dim">{{ icdrLabel(c.ref_icdr) }}</td>
+              <td class="mono dim">{{ icdrLabel(c.ai_icdr_shown) }}</td>
+              <td class="mono" [class]="agreeClass(c.dme, c.ref_dme)">{{ dmeLabel(c.dme) }}</td>
+              <td class="mono dim">{{ dmeLabel(c.ref_dme) }}</td>
+              <td class="mono dim">{{ dmeLabel(c.ai_dme_shown) }}</td>
+              <td>
+                <span class="pill" [class]="c.ai_decision || ''">{{ c.ai_decision || "—" }}</span>
+              </td>
+              <td class="mono">{{ c.confidence ?? "—" }}</td>
+              <td class="mono">{{ c.difficulty ?? "—" }}</td>
+              <td class="mono">
+                {{ c.n_macula_corrections || "" }}
+                <span class="dim" *ngIf="c.macula_correction_dist_px != null">
+                  ({{ c.macula_correction_dist_px | number: "1.0-0" }}px)</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </ng-container>
+</div>

@@ -704,20 +704,70 @@ pub async fn admin_revert_submission(
     state.with(|s| -> Result<()> {
         let results = s.results_db.as_ref().unwrap();
         let now = chrono::Utc::now().to_rfc3339();
-        let assignment_id: i64 = results
+
+        // Pull the fields we want to preserve in the audit archive.
+        type Row = (
+            i64,            // assignment_id
+            Option<i64>,    // reader_id
+            Option<i64>,    // case_id
+            Option<String>, // phase
+            Option<String>, // submitted_at
+            Option<i64>,    // icdr
+            Option<i64>,    // dme
+            Option<String>, // notes
+            Option<i64>,    // confidence
+            Option<i64>,    // difficulty
+            Option<String>, // ai_decision
+            Option<String>, // adjudication_notes
+        );
+        let row: Row = results
             .query_row(
-                "SELECT assignment_id FROM submissions WHERE id=?1",
+                "SELECT a.id, a.reader_id, a.case_id, a.phase, sub.submitted_at,
+                        sub.icdr, sub.dme, sub.notes, sub.confidence, sub.difficulty,
+                        sub.ai_decision, sub.adjudication_notes
+                 FROM submissions sub
+                 JOIN assignments a ON a.id = sub.assignment_id
+                 WHERE sub.id = ?1",
                 params![submission_id],
-                |r| r.get(0),
+                |r| {
+                    Ok((
+                        r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?,
+                        r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?,
+                        r.get(10)?, r.get(11)?,
+                    ))
+                },
             )
             .map_err(|_| Error::NotFound(format!("submission {}", submission_id)))?;
+        let assignment_id = row.0;
+
         let tx = results.unchecked_transaction()?;
+        // 1. Archive the original grade for audit.
         tx.execute(
-            "UPDATE submissions SET reverted_at=?1, revert_reason=?2 WHERE id=?3",
-            params![now, reason, submission_id],
+            "INSERT INTO revert_log(
+                submission_id, assignment_id, reader_id, case_id, phase,
+                submitted_at, icdr, dme, notes, confidence, difficulty,
+                ai_decision, adjudication_notes, reverted_at, revert_reason)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+            params![
+                submission_id, assignment_id, row.1, row.2, row.3, row.4, row.5,
+                row.6, row.7, row.8, row.9, row.10, row.11, now, reason,
+            ],
+        )?;
+        // 2. Unlink the attempt's telemetry from the submission being removed
+        //    (FKs are ON; keep the rows, tied to the assignment, for analysis).
+        tx.execute(
+            "UPDATE events SET submission_id=NULL WHERE submission_id=?1",
+            params![submission_id],
         )?;
         tx.execute(
-            "UPDATE assignments SET status='reverted' WHERE id=?1",
+            "UPDATE mouse_track SET submission_id=NULL WHERE submission_id=?1",
+            params![submission_id],
+        )?;
+        // 3. Remove the submission (frees UNIQUE(assignment_id) for a re-grade).
+        tx.execute("DELETE FROM submissions WHERE id=?1", params![submission_id])?;
+        // 4. Re-open the case so next_case serves it to the reader again.
+        tx.execute(
+            "UPDATE assignments SET status='pending' WHERE id=?1",
             params![assignment_id],
         )?;
         tx.commit()?;
@@ -738,6 +788,271 @@ pub async fn admin_export_results(state: State<'_, AppState>, dest_path: String)
         let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
         Ok(parent.join(format!("{}.results.sqlite", stem)))
     })?;
+    // The DB runs in WAL mode, so recent writes may live only in the `-wal`
+    // sidecar. Fold them into the main file first, otherwise the plain file copy
+    // below would silently export a stale snapshot (missing the latest cases).
+    state.with(|s| -> Result<()> {
+        if let Some(db) = s.results_db.as_ref() {
+            db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        }
+        Ok(())
+    })?;
     std::fs::copy(&src, &dest_path)?;
     Ok(dest_path)
+}
+
+// ---------- Per-reader statistics ----------
+
+#[derive(Serialize)]
+pub struct ReaderInfo {
+    pub id: i64,
+    pub name: String,
+    pub surname: String,
+    pub first_seen_at: String,
+    pub last_seen_at: String,
+}
+
+/// One row per assignment for the selected reader, joined with its submission
+/// (if any), the reference grades from the project, and event/mouse aggregates.
+/// All heavy stats are computed on the frontend from these rows so the admin can
+/// re-slice them instantly with filters.
+#[derive(Serialize, Default)]
+pub struct CaseRecord {
+    pub assignment_id: i64,
+    pub case_id: i64,
+    pub phase: String,
+    pub status: String,
+    pub is_calibration: bool,
+    pub ref_icdr: Option<i64>,
+    pub ref_dme: Option<i64>,
+    pub case_ai_icdr: Option<i64>,
+    pub case_ai_dme: Option<i64>,
+    pub submitted_at: Option<String>,
+    pub icdr: Option<i64>,
+    pub dme: Option<i64>,
+    pub confidence: Option<i64>,
+    pub difficulty: Option<i64>,
+    pub pre_ai_icdr: Option<i64>,
+    pub pre_ai_dme: Option<i64>,
+    pub ai_icdr_shown: Option<i64>,
+    pub ai_dme_shown: Option<i64>,
+    pub ai_decision: Option<String>,
+    pub has_notes: bool,
+    pub has_adjudication_notes: bool,
+    pub active_ms_macula: Option<i64>,
+    pub active_ms_od: Option<i64>,
+    pub active_ms_macula_pre_ai: Option<i64>,
+    pub active_ms_macula_post_ai: Option<i64>,
+    pub active_ms_od_pre_ai: Option<i64>,
+    pub active_ms_od_post_ai: Option<i64>,
+    pub first_interaction_ms_macula: Option<i64>,
+    pub first_interaction_ms_od: Option<i64>,
+    pub first_overlay_toggle_off_ms: Option<i64>,
+    pub n_macula_corrections: i64,
+    pub macula_correction_dist_px: Option<f64>,
+    pub n_zoom: i64,
+    pub n_pan: i64,
+    pub n_overlay_toggle: i64,
+    pub n_preprocess_toggle: i64,
+    pub n_view_switch: i64,
+    pub n_idle: i64,
+    pub n_mouse_samples: i64,
+}
+
+#[derive(Serialize)]
+pub struct ReaderStats {
+    pub reader: ReaderInfo,
+    pub cases: Vec<CaseRecord>,
+    pub revert_count: i64,
+}
+
+#[tauri::command]
+pub async fn admin_reader_stats(state: State<'_, AppState>, reader_id: i64) -> Result<ReaderStats> {
+    state.require_admin()?;
+    state.require_project()?;
+    state.with(|s| -> Result<ReaderStats> {
+        let results = s.results_db.as_ref().unwrap();
+        let project = s.project_db.as_ref().unwrap();
+
+        // Reader.
+        let reader = results
+            .query_row(
+                "SELECT id, name, surname, first_seen_at, last_seen_at FROM readers WHERE id=?1",
+                params![reader_id],
+                |r| {
+                    Ok(ReaderInfo {
+                        id: r.get(0)?,
+                        name: r.get(1)?,
+                        surname: r.get(2)?,
+                        first_seen_at: r.get(3)?,
+                        last_seen_at: r.get(4)?,
+                    })
+                },
+            )
+            .map_err(|_| Error::NotFound(format!("reader {}", reader_id)))?;
+
+        // Reference grades + calibration + AI, keyed by case id.
+        let case_refs = project_db::list_cases(project)?;
+        let ref_map: std::collections::HashMap<i64, project_db::CaseRef> =
+            case_refs.into_iter().map(|c| (c.id, c)).collect();
+
+        // Base records: assignments LEFT JOIN submissions.
+        let mut stmt = results.prepare(
+            "SELECT a.id, a.case_id, a.phase, a.status,
+                    sub.submitted_at, sub.icdr, sub.dme, sub.confidence, sub.difficulty,
+                    sub.pre_ai_icdr, sub.pre_ai_dme, sub.ai_icdr_shown, sub.ai_dme_shown,
+                    sub.ai_decision, sub.notes, sub.adjudication_notes,
+                    sub.active_time_ms_macula, sub.active_time_ms_od,
+                    sub.active_time_ms_macula_pre_ai, sub.active_time_ms_macula_post_ai,
+                    sub.active_time_ms_od_pre_ai, sub.active_time_ms_od_post_ai,
+                    sub.first_interaction_ms_macula, sub.first_interaction_ms_od,
+                    sub.first_overlay_toggle_off_ms
+             FROM assignments a
+             LEFT JOIN submissions sub ON sub.assignment_id = a.id
+             WHERE a.reader_id = ?1
+             ORDER BY (sub.submitted_at IS NULL), sub.submitted_at, a.order_index",
+        )?;
+        let mut cases: Vec<CaseRecord> = Vec::new();
+        let rows = stmt.query_map(params![reader_id], |r| {
+            let case_id: i64 = r.get(1)?;
+            let cref = ref_map.get(&case_id);
+            let notes: Option<String> = r.get(14)?;
+            let adj: Option<String> = r.get(15)?;
+            Ok(CaseRecord {
+                assignment_id: r.get(0)?,
+                case_id,
+                phase: r.get(2)?,
+                status: r.get(3)?,
+                is_calibration: cref.map(|c| c.is_calibration).unwrap_or(false),
+                ref_icdr: cref.map(|c| c.ref_icdr),
+                ref_dme: cref.map(|c| c.ref_dme),
+                case_ai_icdr: cref.and_then(|c| c.ai_icdr),
+                case_ai_dme: cref.and_then(|c| c.ai_dme),
+                submitted_at: r.get(4)?,
+                icdr: r.get(5)?,
+                dme: r.get(6)?,
+                confidence: r.get(7)?,
+                difficulty: r.get(8)?,
+                pre_ai_icdr: r.get(9)?,
+                pre_ai_dme: r.get(10)?,
+                ai_icdr_shown: r.get(11)?,
+                ai_dme_shown: r.get(12)?,
+                ai_decision: r.get(13)?,
+                has_notes: notes.map(|n| !n.trim().is_empty()).unwrap_or(false),
+                has_adjudication_notes: adj.map(|n| !n.trim().is_empty()).unwrap_or(false),
+                active_ms_macula: r.get(16)?,
+                active_ms_od: r.get(17)?,
+                active_ms_macula_pre_ai: r.get(18)?,
+                active_ms_macula_post_ai: r.get(19)?,
+                active_ms_od_pre_ai: r.get(20)?,
+                active_ms_od_post_ai: r.get(21)?,
+                first_interaction_ms_macula: r.get(22)?,
+                first_interaction_ms_od: r.get(23)?,
+                first_overlay_toggle_off_ms: r.get(24)?,
+                ..Default::default()
+            })
+        })?;
+        for row in rows {
+            cases.push(row?);
+        }
+
+        // Index records by assignment for cheap merging of aggregates.
+        let mut idx: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+        for (i, c) in cases.iter().enumerate() {
+            idx.insert(c.assignment_id, i);
+        }
+
+        // Event counts per (assignment, event_type).
+        let mut estmt = results.prepare(
+            "SELECT e.assignment_id, e.event_type, COUNT(*)
+             FROM events e
+             WHERE e.assignment_id IN (SELECT id FROM assignments WHERE reader_id = ?1)
+             GROUP BY e.assignment_id, e.event_type",
+        )?;
+        let erows = estmt.query_map(params![reader_id], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+        })?;
+        for row in erows {
+            let (aid, etype, n) = row?;
+            if let Some(&i) = idx.get(&aid) {
+                let c = &mut cases[i];
+                match etype.as_str() {
+                    "zoom" => c.n_zoom += n,
+                    "pan" => c.n_pan += n,
+                    "overlay_toggle" | "overlay_tab_toggle" => c.n_overlay_toggle += n,
+                    "preprocess_toggle" => c.n_preprocess_toggle += n,
+                    "view_switch" => c.n_view_switch += n,
+                    "idle_start" => c.n_idle += n,
+                    "macula_corrected" => c.n_macula_corrections += n,
+                    _ => {}
+                }
+            }
+        }
+
+        // Macula-correction distances (mean per assignment).
+        let mut cstmt = results.prepare(
+            "SELECT assignment_id, payload_json FROM events
+             WHERE event_type = 'macula_corrected'
+               AND assignment_id IN (SELECT id FROM assignments WHERE reader_id = ?1)",
+        )?;
+        let crows = cstmt.query_map(params![reader_id], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?))
+        })?;
+        let mut dist_acc: std::collections::HashMap<i64, (f64, i64)> =
+            std::collections::HashMap::new();
+        for row in crows {
+            let (aid, payload) = row?;
+            if let Some(p) = payload {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&p) {
+                    let fx = v.pointer("/from/x").and_then(|x| x.as_f64());
+                    let fy = v.pointer("/from/y").and_then(|x| x.as_f64());
+                    let tx = v.pointer("/to/x").and_then(|x| x.as_f64());
+                    let ty = v.pointer("/to/y").and_then(|x| x.as_f64());
+                    if let (Some(fx), Some(fy), Some(tx), Some(ty)) = (fx, fy, tx, ty) {
+                        let d = ((tx - fx).powi(2) + (ty - fy).powi(2)).sqrt();
+                        let e = dist_acc.entry(aid).or_insert((0.0, 0));
+                        e.0 += d;
+                        e.1 += 1;
+                    }
+                }
+            }
+        }
+        for (aid, (sum, n)) in dist_acc {
+            if let Some(&i) = idx.get(&aid) {
+                if n > 0 {
+                    cases[i].macula_correction_dist_px = Some(sum / n as f64);
+                }
+            }
+        }
+
+        // Mouse-sample counts per assignment.
+        let mut mstmt = results.prepare(
+            "SELECT assignment_id, COUNT(*) FROM mouse_track
+             WHERE assignment_id IN (SELECT id FROM assignments WHERE reader_id = ?1)
+             GROUP BY assignment_id",
+        )?;
+        let mrows = mstmt.query_map(params![reader_id], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+        })?;
+        for row in mrows {
+            let (aid, n) = row?;
+            if let Some(&i) = idx.get(&aid) {
+                cases[i].n_mouse_samples = n;
+            }
+        }
+
+        let revert_count: i64 = results
+            .query_row(
+                "SELECT COUNT(*) FROM revert_log WHERE reader_id = ?1",
+                params![reader_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        Ok(ReaderStats {
+            reader,
+            cases,
+            revert_count,
+        })
+    })
 }

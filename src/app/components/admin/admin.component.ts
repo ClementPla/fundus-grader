@@ -6,12 +6,19 @@ import { TranslocoPipe, TranslocoService } from "@jsverse/transloco";
 import { ApiService } from "../../services/api.service";
 import { AppStateService } from "../../services/app-state.service";
 import { LangToggleComponent } from "../lang-toggle/lang-toggle.component";
+import { AdminStatsComponent } from "./admin-stats.component";
 import { AdminStatus, SubmissionRow } from "../../types";
 
 @Component({
   selector: "app-admin",
   standalone: true,
-  imports: [CommonModule, FormsModule, TranslocoPipe, LangToggleComponent],
+  imports: [
+    CommonModule,
+    FormsModule,
+    TranslocoPipe,
+    LangToggleComponent,
+    AdminStatsComponent,
+  ],
   template: `
     <div class="root">
       <div class="bar">
@@ -24,7 +31,7 @@ import { AdminStatus, SubmissionRow } from "../../types";
         </button>
       </div>
 
-      <div class="content">
+      <div class="content" [class.wide]="status()?.authed && tab() === 'stats'">
         <!-- Project required -->
         <div class="panel" *ngIf="!appState.project()">
           <p class="dim">{{ "admin.noProject" | transloco }}</p>
@@ -92,6 +99,18 @@ import { AdminStatus, SubmissionRow } from "../../types";
 
         <!-- Authenticated panes -->
         <ng-container *ngIf="status() && status()!.authed">
+          <div class="tabbar">
+            <button [class.on]="tab() === 'manage'" (click)="tab.set('manage')">
+              Manage
+            </button>
+            <button [class.on]="tab() === 'stats'" (click)="tab.set('stats')">
+              Statistics
+            </button>
+          </div>
+
+          <app-admin-stats *ngIf="tab() === 'stats'"></app-admin-stats>
+
+          <ng-container *ngIf="tab() === 'manage'">
           <div class="panel">
             <h3>{{ "admin.phaseTitle" | transloco }}</h3>
             <p class="dim">
@@ -201,6 +220,7 @@ import { AdminStatus, SubmissionRow } from "../../types";
               {{ "admin.updatePw" | transloco }}
             </button>
           </div>
+          </ng-container>
         </ng-container>
       </div>
     </div>
@@ -237,6 +257,9 @@ import { AdminStatus, SubmissionRow } from "../../types";
         box-sizing: border-box;
         margin: 0 auto;
       }
+      .content.wide {
+        max-width: 1400px;
+      }
       h3 {
         margin: 0 0 8px 0;
         font-size: 14px;
@@ -246,6 +269,25 @@ import { AdminStatus, SubmissionRow } from "../../types";
         display: flex;
         flex-direction: column;
         gap: 10px;
+      }
+      .tabbar {
+        display: flex;
+        gap: 4px;
+        border-bottom: 1px solid var(--border);
+        margin-bottom: 4px;
+      }
+      .tabbar button {
+        background: transparent;
+        border: none;
+        border-bottom: 2px solid transparent;
+        border-radius: 0;
+        padding: 8px 14px;
+        color: var(--text-dim);
+        font-size: 14px;
+      }
+      .tabbar button.on {
+        color: var(--text);
+        border-bottom-color: var(--accent);
       }
       input {
         width: 100%;
@@ -289,6 +331,7 @@ export class AdminComponent implements OnInit {
   status = signal<AdminStatus | null>(null);
   submissions = signal<SubmissionRow[]>([]);
   lastExport = signal<string | null>(null);
+  tab = signal<"manage" | "stats">("manage");
   password = "";
   newPassword = "";
   newPassword2 = "";

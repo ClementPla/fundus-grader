@@ -130,6 +130,63 @@ export interface AdminStatus {
   idle_threshold_ms: number;
 }
 
+/** One assignment row for a reader, with its submission (if any), reference
+ *  grades, and interaction aggregates. Returned by `admin_reader_stats`; all
+ *  summary statistics are computed on the frontend from these. */
+export interface CaseRecord {
+  assignment_id: number;
+  case_id: number;
+  phase: "no_ai" | "ai";
+  status: string;
+  is_calibration: boolean;
+  ref_icdr: number | null;
+  ref_dme: number | null;
+  case_ai_icdr: number | null;
+  case_ai_dme: number | null;
+  submitted_at: string | null;
+  icdr: number | null;
+  dme: number | null;
+  confidence: number | null;
+  difficulty: number | null;
+  pre_ai_icdr: number | null;
+  pre_ai_dme: number | null;
+  ai_icdr_shown: number | null;
+  ai_dme_shown: number | null;
+  ai_decision: AiDecision | null;
+  has_notes: boolean;
+  has_adjudication_notes: boolean;
+  active_ms_macula: number | null;
+  active_ms_od: number | null;
+  active_ms_macula_pre_ai: number | null;
+  active_ms_macula_post_ai: number | null;
+  active_ms_od_pre_ai: number | null;
+  active_ms_od_post_ai: number | null;
+  first_interaction_ms_macula: number | null;
+  first_interaction_ms_od: number | null;
+  first_overlay_toggle_off_ms: number | null;
+  n_macula_corrections: number;
+  macula_correction_dist_px: number | null;
+  n_zoom: number;
+  n_pan: number;
+  n_overlay_toggle: number;
+  n_preprocess_toggle: number;
+  n_view_switch: number;
+  n_idle: number;
+  n_mouse_samples: number;
+}
+
+export interface ReaderStats {
+  reader: {
+    id: number;
+    name: string;
+    surname: string;
+    first_seen_at: string;
+    last_seen_at: string;
+  };
+  cases: CaseRecord[];
+  revert_count: number;
+}
+
 export interface SubmissionRow {
   id: number;
   assignment_id: number;

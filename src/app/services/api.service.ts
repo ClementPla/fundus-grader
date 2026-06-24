@@ -10,6 +10,7 @@ import {
   MouseSample,
   OpenProjectResult,
   Reader,
+  ReaderStats,
   SessionStart,
   SubmissionRow,
   SubmitPayload,
@@ -100,6 +101,9 @@ export class ApiService {
   }
   adminExportResults(destPath: string) {
     return invoke<string>("admin_export_results", { destPath });
+  }
+  adminReaderStats(readerId: number) {
+    return invoke<ReaderStats>("admin_reader_stats", { readerId });
   }
   async pushMouseSamples(samples: MouseSample[]): Promise<void> {
     if (samples.length === 0) return;

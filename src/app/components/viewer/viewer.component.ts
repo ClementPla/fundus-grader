@@ -172,6 +172,7 @@ export class ViewerComponent
   }
   ngAfterViewInit() {
     this.caseStartedAtPerf = performance.now();
+    this.currentView = this.initialView();
     queueMicrotask(() => this.switchView(this.currentView, true));
     document.addEventListener("keydown", this.onDocumentKeyDown);
     this.startMouseSampleFlusher();
@@ -190,7 +191,7 @@ export class ViewerComponent
       this.firstInteractionSentFor.clear();
       this.firstViewSentFor.clear();
       this.initViewStates();
-      this.currentView = "macula";
+      this.currentView = this.initialView();
       queueMicrotask(() => this.switchView(this.currentView, true));
     }
   }
@@ -301,6 +302,12 @@ export class ViewerComponent
 
   currentViewState(): ViewState | undefined {
     return this.viewStates.find((v) => v.view === this.currentView);
+  }
+
+  /** First view to present for a case: the optic disc when available, otherwise
+   *  the macula (some cases have no OD view). */
+  private initialView(): "macula" | "od" {
+    return this.viewStates.some((v) => v.view === "od") ? "od" : "macula";
   }
 
   lesionOverlays(cs: ViewState): OverlayState[] {

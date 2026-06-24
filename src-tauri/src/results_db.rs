@@ -92,6 +92,29 @@ pub fn open(path: &Path) -> Result<Connection> {
             value TEXT NOT NULL
         );
 
+        -- Audit archive for reverted grades. When an admin reverts a submission
+        -- the case is re-opened for the reader, so the original submission row
+        -- is removed from `submissions`; its grade is preserved here. No foreign
+        -- keys: this must survive deletion of the original submission/assignment.
+        CREATE TABLE IF NOT EXISTS revert_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            submission_id INTEGER,
+            assignment_id INTEGER NOT NULL,
+            reader_id INTEGER,
+            case_id INTEGER,
+            phase TEXT,
+            submitted_at TEXT,
+            icdr INTEGER,
+            dme INTEGER,
+            notes TEXT,
+            confidence INTEGER,
+            difficulty INTEGER,
+            ai_decision TEXT,
+            adjudication_notes TEXT,
+            reverted_at TEXT NOT NULL,
+            revert_reason TEXT
+        );
+
         CREATE INDEX IF NOT EXISTS idx_assignments_reader_phase
             ON assignments(reader_id, phase, order_index);
         CREATE INDEX IF NOT EXISTS idx_events_assignment
@@ -139,6 +162,51 @@ pub fn open(path: &Path) -> Result<Connection> {
         conn.execute(
             "ALTER TABLE submissions ADD COLUMN adjudication_notes TEXT",
             [],
+        )?;
+    }
+
+    // Migrate any assignments left in the old 'reverted' state into the new
+    // model: a reverted case is re-opened (status 'pending') and its original
+    // submission is archived into revert_log and removed (so the reader can
+    // re-grade — the UNIQUE(assignment_id) on submissions otherwise blocks a
+    // new submission). Idempotent: afterwards no 'reverted' rows remain.
+    let stuck: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM assignments WHERE status='reverted'",
+        [],
+        |r| r.get(0),
+    )?;
+    if stuck > 0 {
+        conn.execute_batch(
+            r#"
+            INSERT INTO revert_log(
+                submission_id, assignment_id, reader_id, case_id, phase,
+                submitted_at, icdr, dme, notes, confidence, difficulty,
+                ai_decision, adjudication_notes, reverted_at, revert_reason)
+            SELECT sub.id, a.id, a.reader_id, a.case_id, a.phase,
+                   sub.submitted_at, sub.icdr, sub.dme, sub.notes,
+                   sub.confidence, sub.difficulty, sub.ai_decision,
+                   sub.adjudication_notes,
+                   COALESCE(sub.reverted_at, datetime('now')), sub.revert_reason
+            FROM submissions sub
+            JOIN assignments a ON a.id = sub.assignment_id
+            WHERE a.status='reverted';
+
+            UPDATE events SET submission_id=NULL WHERE submission_id IN (
+                SELECT sub.id FROM submissions sub
+                JOIN assignments a ON a.id = sub.assignment_id
+                WHERE a.status='reverted');
+            UPDATE mouse_track SET submission_id=NULL WHERE submission_id IN (
+                SELECT sub.id FROM submissions sub
+                JOIN assignments a ON a.id = sub.assignment_id
+                WHERE a.status='reverted');
+
+            DELETE FROM submissions WHERE id IN (
+                SELECT sub.id FROM submissions sub
+                JOIN assignments a ON a.id = sub.assignment_id
+                WHERE a.status='reverted');
+
+            UPDATE assignments SET status='pending' WHERE status='reverted';
+            "#,
         )?;
     }
 

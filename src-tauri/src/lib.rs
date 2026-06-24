@@ -34,6 +34,7 @@ pub fn run() {
             commands::admin_list_submissions,
             commands::admin_revert_submission,
             commands::admin_export_results,
+            commands::admin_reader_stats,
             commands::preprocess_case_image,
             commands::push_mouse_samples,
         ])
